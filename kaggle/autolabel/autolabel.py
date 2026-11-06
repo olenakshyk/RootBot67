@@ -28,13 +28,16 @@ CLASSES = ["cat_warrior", "keep", "enemy_warrior", "enemy_building", "enemy_toke
 COLOURS = {
     "orange": [((3, 140, 110), (22, 255, 255))],
     "blue": [((95, 140, 70), (125, 255, 255))],
-    "green": [((40, 90, 70), (85, 255, 255))],
+    "green": [((30, 70, 70), (85, 255, 255))],
 }
 
 REF_WIDTH = 2560  # areas below are for a frame this wide, scaled for other sizes
 MIN_AREA = 900  # smaller blobs are noise or painted details
 MAX_AREA = 60000  # larger blobs are faction boards, cards, etc.
 SOLID_FILL = 0.82  # colour pixels / convex hull area above this -> solid wooden piece
+WHITE_FRAC = 0.08  # share of white-ish pixels inside the hull above this -> flat piece with art
+FLAT_SIZE = (0.4, 3.0)  # flat piece hull area relative to a typical warrior
+DEFAULT_WARRIOR = 3600  # typical warrior area (px at REF_WIDTH) when a frame has no clear one
 ROUND_CIRC = 0.80  # hull circularity above this -> round token
 SPLIT_RATIO = 1.6  # blob area / typical warrior area above this -> several warriors
 COLOURS_BGR = [(0, 140, 255), (0, 0, 255), (255, 80, 0), (255, 0, 255), (0, 220, 0)]
@@ -80,15 +83,25 @@ def split_blob(blob, k):
     return parts
 
 
+def white_fraction(white, blob, hull):
+    """Share of white-ish pixels inside the hull but outside the coloured blob."""
+    hm = np.zeros_like(blob)
+    cv2.drawContours(hm, [hull], -1, 255, -1)
+    inside = hm > 0
+    return float((white[inside] & (blob[inside] == 0)).sum()) / max(inside.sum(), 1)
+
+
 def label_frame(img):
     """Return list of (class_id, contour) for one BGR frame."""
     h, w = img.shape[:2]
     s = (w / REF_WIDTH) ** 2
     min_a, max_a = MIN_AREA * s, MAX_AREA * s
+    hsv = cv2.cvtColor(img, cv2.COLOR_BGR2HSV)
+    white = (hsv[..., 1] < 60) & (hsv[..., 2] > 170)
     found = []
     for colour, mask in colour_masks(img).items():
         n, lab, st, _ = cv2.connectedComponentsWithStats(mask, connectivity=8)
-        solids, flats = [], []
+        solids, others = [], []
         for i in range(1, n):
             area = st[i, cv2.CC_STAT_AREA]
             if not (min_a <= area <= max_a):
@@ -98,13 +111,23 @@ def label_frame(img):
             if fill >= SOLID_FILL:
                 solids.append((blob, area))
             else:
-                flats.append((hull, circ))
+                others.append((blob, area, hull, hull_area, circ))
         # typical single warrior = median of the smaller half of solid blobs
         areas = sorted(a for _, a in solids)
         typical = np.median(areas[: max(1, (len(areas) + 1) // 2)]) if areas else None
+        typical = typical or DEFAULT_WARRIOR * s
         warrior_cls = 0 if colour == "orange" else 2
+        flats = []
+        for blob, area, hull, hull_area, circ in others:
+            wf = white_fraction(white, blob, hull)
+            rel = hull_area / typical
+            if wf >= WHITE_FRAC and FLAT_SIZE[0] <= rel <= FLAT_SIZE[1]:
+                flats.append((hull, circ))  # token / building with white art
+            elif wf < WHITE_FRAC and area <= 8 * typical:
+                solids.append((blob, area))  # cluster of touching warriors, split below
+            # else: big printed areas (player boards, cards) -> ignore
         for blob, area in solids:
-            k = int(round(area / typical)) if typical and area > SPLIT_RATIO * typical else 1
+            k = int(round(area / typical)) if area > SPLIT_RATIO * typical else 1
             parts = split_blob(blob, min(k, 8)) if k > 1 else [blob]
             for p in parts:
                 cnts, _ = cv2.findContours(p, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
