@@ -1,0 +1,13 @@
+{
+  "id": "natalyakoz/rootbot-sam-labels",
+  "title": "rootbot-sam-labels",
+  "code_file": "sam_labels.py",
+  "language": "python",
+  "kernel_type": "script",
+  "is_private": true,
+  "enable_gpu": true,
+  "enable_internet": true,
+  "dataset_sources": ["natalyakoz/rootbot-frames", "natalyakoz/rootbot-points"],
+  "competition_sources": [],
+  "kernel_sources": []
+}

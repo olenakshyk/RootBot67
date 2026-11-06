@@ -1,7 +1,7 @@
 {
-  "id": "natalyakoz/rootbot-autolabel",
-  "title": "rootbot-autolabel",
-  "code_file": "autolabel.py",
+  "id": "natalyakoz/rootbot-candidates",
+  "title": "rootbot-candidates",
+  "code_file": "candidates.py",
   "language": "python",
   "kernel_type": "script",
   "is_private": true,

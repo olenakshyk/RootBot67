@@ -1,0 +1,7 @@
+cat_warrior
+keep
+eyrie_warrior
+eyrie_roost
+alliance_warrior
+alliance_base
+alliance_sympathy
