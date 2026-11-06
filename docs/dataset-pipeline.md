@@ -68,7 +68,7 @@ uvx --with six kaggle kernels output <user>/rootbot-candidates -p data/candidate
 Для кожного кадру: одна точка всередині кожної фігурки + правильний клас; зайві точки прибрати, пропущені додати.
 Результат - `data/points/*.json` у форматі `{кадр: [{"x", "y", "cls"}]}` (пікселі повного кадру).
 
-Зараз це робить Claude (3 паралельні помічники по 20 кадрів, ~1 год). Те саме можуть зробити люди в CVAT.
+Зараз це робить Claude: 3 паралельні помічники (Sonnet, low effort, щоб економити ліміти) по 20 кадрів за інструкцією [point-review.md](point-review.md). Те саме можуть зробити люди.
 
 Потім усі файли зливаємо в один `points.json` і разом з `config/piece_classes.txt` вантажимо як датасет Kaggle
 `rootbot-points`.
