@@ -90,20 +90,20 @@ def card(suit):
 
 @pytest.mark.parametrize("suit", [Suit.FOX, Suit.RABBIT, Suit.MOUSE])
 def test_order_clearings_of_card_suit_in_priority_order(board, suit):
-    expected = [c.id for c in board.by_priority() if c.suit == suit]
+    expected = [c for c in board.by_priority() if c.suit == suit]
     assert order_clearings(board, card(suit)) == expected
     assert len(expected) == 4
 
 
 def test_order_clearings_bird_means_all(board):
-    assert order_clearings(board, card(Suit.BIRD)) == [c.id for c in board.by_priority()]
+    assert order_clearings(board, card(Suit.BIRD)) == board.by_priority()
 
 
 # --- День: бій ---
 
 
 def fox_clearings(board):
-    return [c.id for c in board.by_priority() if c.suit == Suit.FOX]
+    return [c.id for c in board.by_priority(Suit.FOX)]
 
 
 def test_battle_where_bot_and_enemy_meet(board):
@@ -113,7 +113,7 @@ def test_battle_where_bot_and_enemy_meet(board):
 
 
 def test_no_battle_on_other_suit(board):
-    other = board.of_suit(Suit.MOUSE)[0].id
+    other = board.by_priority(Suit.MOUSE)[0].id
     s = state(board, {other: {BOT: pc(w=3), ALLIANCE: pc(w=1)}})
     assert battles(s, card(Suit.FOX)) == []
 
@@ -153,7 +153,7 @@ def test_battles_on_every_matching_clearing_in_priority_order(board):
 
 
 def test_bird_card_battles_on_all_suits(board):
-    mouse, rabbit = board.of_suit(Suit.MOUSE)[0].id, board.of_suit(Suit.RABBIT)[0].id
+    mouse, rabbit = board.by_priority(Suit.MOUSE)[0].id, board.by_priority(Suit.RABBIT)[0].id
     s = state(
         board,
         {

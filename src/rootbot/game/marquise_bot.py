@@ -4,9 +4,9 @@ from __future__ import annotations
 
 from dataclasses import replace
 
-from rootbot.common.types import ClearingId, Faction, OrderCard, PieceCounts, Suit
+from rootbot.common.types import Faction, OrderCard, PieceCounts, Suit
 from rootbot.game.actions import Battle, BattleResult, Move, Recruit, Score
-from rootbot.game.board import CLEARING_SUITS, Board
+from rootbot.game.board import CLEARING_SUITS, Board, Clearing
 from rootbot.game.state import BOT, GameState
 
 DIE_FACES = range(4)  # 12-гранний кубик бою має значення 0..3
@@ -35,9 +35,9 @@ def battles(state: GameState, card: OrderCard) -> list[Battle]:
     """
     result = []
     for clearing in order_clearings(state.board, card):
-        defender = state.defender(clearing)
-        if state.counts(clearing, BOT).warriors > 0 and defender is not None:
-            result.append(Battle(clearing, defender))
+        defender = state.defender(clearing.id)
+        if state.counts(clearing.id, BOT).warriors > 0 and defender is not None:
+            result.append(Battle(clearing.id, defender))
     return result
 
 
@@ -100,7 +100,7 @@ def moves(state: GameState, card: OrderCard, *, stay_warriors: int) -> list[Move
         pieces={c: {f: replace(n) for f, n in here.items()} for c, here in state.pieces.items()},
     )
     result = []
-    for src in order_clearings(board, card):
+    for src in (c.id for c in order_clearings(board, card)):
         warriors = current.counts(src, BOT).warriors
         if current.ruling_faction(src) != BOT or warriors <= stay_warriors:
             continue
@@ -183,6 +183,6 @@ def card_given(*, points: int) -> Score:
     return Score(points, "poor manual dexterity: card given to bot")
 
 
-def order_clearings(board: Board, card: OrderCard) -> list[ClearingId]:
+def order_clearings(board: Board, card: OrderCard) -> list[Clearing]:
     """Галявини масті карти наказу в порядку пріоритету. Птах діє як будь-яка масть: усі."""
-    return [c.id for c in board.by_priority() if card.suit in (Suit.BIRD, c.suit)]
+    return board.by_priority(None if card.suit == Suit.BIRD else card.suit)

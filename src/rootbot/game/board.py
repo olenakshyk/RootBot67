@@ -40,12 +40,12 @@ class Board:
     def adjacent(self, clearing_id: ClearingId) -> tuple[ClearingId, ...]:
         return self.clearings[clearing_id].adjacent
 
-    def by_priority(self) -> list[Clearing]:
-        """Галявини в порядку пріоритету: 1, 2, …, 12."""
-        return sorted(self.clearings.values(), key=lambda c: c.priority)
-
-    def of_suit(self, suit: Suit) -> list[Clearing]:
-        return [c for c in self.clearings.values() if c.suit == suit]
+    def by_priority(self, suit: Suit | None = None) -> list[Clearing]:
+        """Галявини в порядку пріоритету: 1, 2, …, 12. Якщо задано `suit`, лише цієї масті."""
+        return sorted(
+            (c for c in self.clearings.values() if suit is None or c.suit == suit),
+            key=lambda c: c.priority,
+        )
 
     def corners(self) -> list[Clearing]:
         return [c for c in self.clearings.values() if c.corner]

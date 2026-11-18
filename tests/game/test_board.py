@@ -41,13 +41,17 @@ def test_autumn_corners():
 def test_autumn_four_of_each_suit():
     board = load_board(AUTUMN)
     for suit in (Suit.FOX, Suit.RABBIT, Suit.MOUSE):
-        assert len(board.of_suit(suit)) == 4
-    assert board.of_suit(Suit.BIRD) == []
+        clearings = board.by_priority(suit)
+        assert len(clearings) == 4
+        assert all(c.suit == suit for c in clearings)
+    assert board.by_priority(Suit.BIRD) == []
 
 
 def test_autumn_priority_order():
     board = load_board(AUTUMN)
     assert [c.priority for c in board.by_priority()] == list(range(1, 13))
+    fox = [c.priority for c in board.by_priority(Suit.FOX)]
+    assert fox == sorted(fox)
 
 
 def test_autumn_adjacency_symmetric():
