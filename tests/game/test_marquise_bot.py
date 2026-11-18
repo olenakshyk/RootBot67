@@ -14,7 +14,6 @@ from rootbot.game.marquise_bot import (
     order_clearings,
     recruits,
     resolve_battle,
-    restarts_day,
 )
 from rootbot.game.state import BOT, GameState
 
@@ -358,9 +357,7 @@ def test_recruit_four_any_without_keep(board):
 
 
 def test_no_craft_cost_restarts_day(board):
-    assert recruit(board, BOT_AT_1_8_3, ()) == []
-    assert restarts_day(OrderCard(suit=FOX, craft_cost=()))
-    assert not restarts_day(OrderCard(suit=FOX, craft_cost=(FOX,)))
+    assert recruit(board, BOT_AT_1_8_3, ()) is None
 
 
 def test_recruit_limited_by_supply_in_priority_order(board):

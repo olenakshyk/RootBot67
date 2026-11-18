@@ -115,7 +115,7 @@ def moves(state: GameState, card: OrderCard, *, stay_warriors: int) -> list[Move
     return result
 
 
-def recruits(state: GameState, card: OrderCard, *, total_warriors: int) -> list[Recruit]:
+def recruits(state: GameState, card: OrderCard, *, total_warriors: int) -> list[Recruit] | None:
     """День, крок 3: набір за вартістю крафту карти. Скільки воїнів у бота всього, береться з
     `game.recruit` у config/default.yaml.
 
@@ -125,12 +125,15 @@ def recruits(state: GameState, card: OrderCard, *, total_warriors: int) -> list[
     - 4 символи «?» (будь-яка масть): 4 воїни в галявину з Keep (якщо Keep знято, нікуди).
 
     Якщо в запасі воїнів не вистачає, галявини заповнюються в порядку пріоритету, кожна повністю
-    перед наступною; решта пропадає. Карта без вартості крафту дає порожній список, див.
-    `restarts_day`.
+    перед наступною; решта пропадає. Порожній список: набирати нікуди або нема кого.
+
+    `None`: у карти немає вартості крафту, тож після бою й руху День починається заново з
+    наступною картою Розкладу, а якщо карт не лишилося, бот переходить до Вечора. Це робить `app`.
+    Перевіряти треба `is None`, бо порожній список теж хибний.
     """
     cost = card.craft_cost
     if not cost:
-        return []
+        return None
     ruled = [c for c in state.board.by_priority() if state.ruling_faction(c.id) == BOT]
     if cost == (Suit.ANY,) * 4:
         targets = [] if state.keep_clearing is None else [state.keep_clearing]
@@ -154,12 +157,6 @@ def recruits(state: GameState, card: OrderCard, *, total_warriors: int) -> list[
         result.append(Recruit(clearing, count))
         supply -= count
     return result
-
-
-def restarts_day(card: OrderCard) -> bool:
-    """Карта без вартості крафту: після бою й руху День починається заново з наступною картою
-    Розкладу, а якщо карт не лишилося, бот переходить до Вечора. Це робить `app`."""
-    return not card.craft_cost
 
 
 def evening(cards_in_schedule: int, *, schedule_size: int) -> int:
