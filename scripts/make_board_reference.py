@@ -54,6 +54,13 @@ def main() -> None:
         raise SystemExit(f"cannot read {a.image}")
     h, w = img.shape[:2]
     print(f"image: {w}x{h} px, dtype {img.dtype}, channels {img.shape[2]}")
+    # to_scale розтягне будь-який знімок до size_mm: повернутий на 90° (вертикальне фото
+    # горизонтальної дошки) мовчки спотвориться, тож зупиняємось
+    if (w > h) != (a.size_mm[0] > a.size_mm[1]):
+        raise SystemExit(
+            f"image is {w}x{h} px but the board is {a.size_mm[0]:.0f}x{a.size_mm[1]:.0f} mm: "
+            "rotate the image by 90 deg (board: ROOT logo top-right, score track at the bottom)"
+        )
 
     # 2. Масштаб: зробити так, щоб 1 мм дошки = px_per_mm пікселів
     ref = to_scale(img, a.size_mm, a.px_per_mm)
