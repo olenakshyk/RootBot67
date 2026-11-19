@@ -7,6 +7,12 @@
     python scripts/make_board_reference.py --image <знімок> --name board_autumn
     python scripts/make_board_reference.py --image <скан> --name bot_board --size-mm 280 210
 
+Орієнтація дошки: лого ROOT праворуч угорі, доріжка рахунку внизу — як центри галявин у
+config/maps/autumn.yaml. Повернутий на 180° еталон працює, але галявини мовчки з'їжджають
+у дзеркальні місця. Тому скрипт зберігає <name>_check.png з колами галявин поверх еталона:
+кола мають лягти на галявини. Найнадійніше — знімати еталон з того самого фото, що й центри
+(root_materials/root_board_photo/IMG_20261106_114643.jpg), у тій самій орієнтації.
+
 Див. docs/vision.md -> «V1: дошка й планшет бота».
 """
 
@@ -68,6 +74,22 @@ def main() -> None:
     )
     yaml.safe_dump(meta, open(a.out / f"{a.name}.yaml", "w"), allow_unicode=True, sort_keys=False)
     print(f"saved: {a.out / (a.name + '.png')} and {a.name}.yaml")
+
+    # 4. Перевірка орієнтації: кола галявин з карти поверх еталона мають лягти на галявини.
+    #    Якщо ні — знімок повернутий (SIFT цього не помітить, галявини з'їдуть мовчки).
+    if a.name.startswith("board_"):
+        check = ref.copy()
+        clearings = yaml.safe_load(open(ROOT / cfg["board"]["map_file"]))["clearings"]
+        for c in clearings:
+            x, y = (round(v * a.px_per_mm) for v in c["center_mm"])
+            cv2.circle(check, (x, y), round(c["radius_mm"] * a.px_per_mm), (0, 0, 255), 2)
+            cv2.putText(
+                check, str(c["id"]), (x - 8, y + 8), cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0, 0, 255), 2
+            )
+        cv2.imwrite(str(a.out / f"{a.name}_check.png"), check)
+        print(
+            f"check orientation: {a.out / (a.name + '_check.png')} - circles must sit on clearings"
+        )
 
 
 if __name__ == "__main__":
