@@ -27,6 +27,18 @@ class Faction(Enum):
     LIZARDS = "lizards"
 
 
+class PieceKind(Enum):
+    """Вид фігурки, який розпізнає зір."""
+
+    WARRIOR = "warrior"
+    BUILDING = "building"
+    TOKEN = "token"
+    PAWN = "pawn"  # фігурка Бродяги
+    KEEP = "keep"  # Фортеця котів (жетон)
+    SCORE = "score"  # маркер на доріжці рахунку
+    DIE = "die"
+
+
 @dataclass
 class PieceCounts:
     """Фігурки однієї фракції на одній галявині."""

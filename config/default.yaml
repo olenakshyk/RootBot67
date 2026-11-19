@@ -41,6 +41,27 @@ board:
   warp_px_per_mm: 2
   board_to_robot_file: config/calibration/board_to_robot.yaml
 
+vision:
+  piece_model:               # vision/piece_detector_model.py; created once at startup
+    type: stub               # stub | yolo
+    weights: null            # trained weights (.pt) for type yolo; none yet — the model is in development
+    device: cuda             # cuda | cpu (falls back to cpu if there is no GPU)
+    classes:                 # model class NAME -> [faction or null, kind]; every model class must be listed
+      marquise_warrior: [marquise_bot, warrior]
+      eyrie_warrior: [eyrie, warrior]
+      alliance_warrior: [alliance, warrior]
+      vagabond: [vagabond, pawn]
+      eyrie_building: [eyrie, building]
+      alliance_building: [alliance, building]
+      alliance_token: [alliance, token]
+      marquise_keep_token: [marquise_bot, keep]
+      marquise_score: [marquise_bot, score]
+      eyrie_score: [eyrie, score]
+      alliance_score: [alliance, score]
+      vagabond_score: [vagabond, score]
+      die: [null, die]
+  min_confidence: 0.4        # boxes below are dropped
+
 supply:
   # Slots of the bot's warrior tray, board frame (mm) - TBD after tray is printed
   slots_mm: []
