@@ -58,13 +58,25 @@ def predict(args):
         B, S, C = [], [], []
         for x0, y0, crop in crops:
             r = model.predict(crop, imgsz=args.imgsz, conf=0.05, iou=0.6, max_det=1000, verbose=False)[0]
-            b = r.boxes.xyxy.cpu().numpy() + np.array([x0, y0, x0, y0])
-            B.append(b)
-            S.append(r.boxes.conf.cpu().numpy())
-            C.append(r.boxes.cls.cpu().numpy().astype(int))
+            b = r.boxes.xyxy.cpu().numpy()
+            keep = np.ones(len(b), bool)
+            if crop is not img:  # a box touching an inner tile edge is a cut piece: the full frame has it whole
+                h, w = crop.shape[:2]
+                if x0 > 0:
+                    keep &= b[:, 0] > 3
+                if x0 + w < W:
+                    keep &= b[:, 2] < w - 3
+                if y0 > 0:
+                    keep &= b[:, 1] > 3
+                if y0 + h < H:
+                    keep &= b[:, 3] < h - 3
+            B.append(b[keep] + np.array([x0, y0, x0, y0]))
+            S.append(r.boxes.conf.cpu().numpy()[keep])
+            C.append(r.boxes.cls.cpu().numpy().astype(int)[keep])
         b, s, c = np.concatenate(B), np.concatenate(S), np.concatenate(C)
         if len(crops) > 1 and len(b):
-            keep = batched_nms(torch.tensor(b), torch.tensor(s), torch.tensor(c), 0.5).numpy()
+            keep = batched_nms(torch.tensor(b, dtype=torch.float32), torch.tensor(s, dtype=torch.float32),
+                               torch.tensor(c), 0.5).numpy()
             b, s, c = b[keep], s[keep], c[keep]
         out.append({"path": p, "W": W, "H": H, "boxes": b.round(1).tolist(), "conf": s.round(4).tolist(),
                     "cls": c.tolist()})
