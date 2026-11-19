@@ -76,7 +76,8 @@ class PieceCounts:  # фігурки однієї фракції на одній
 @dataclass
 class OrderCard:
     suit: Suit  # FOX / RABBIT / MOUSE / BIRD
-    craft_cost: tuple[Suit, ...]  # порожній кортеж означає «немає вартості крафту»
+    # FOX / RABBIT / MOUSE / ANY («?», будь-яка масть); порожній кортеж означає «немає вартості крафту»
+    craft_cost: tuple[Suit, ...]
 
 
 # vision → app
@@ -102,6 +103,13 @@ class Battle:
 
 
 @dataclass
+class BattleResult:  # resolve_battle(state, battle, rolls) після кидка кубиків
+    bot_warriors_lost: int
+    keep_lost: bool
+    defender_hits: int  # скільки фігурок знімає захисник (не більше, ніж має); у Бродяги це предмети
+
+
+@dataclass
 class Move:
     src: ClearingId
     dst: ClearingId
@@ -115,7 +123,7 @@ class Recruit:
 
 
 @dataclass
-class Score:
+class Score:  # Світанок завжди дає рівно один Score, навіть з 0 ПО
     points: int
     reason: str
 
@@ -143,14 +151,17 @@ sequenceDiagram
     App->>Op: показати стан, підтвердити / виправити
     Op->>App: OK
     App->>Game: Birdsong(state)
-    Game-->>App: [Score]
+    Game-->>App: Score
     Op->>App: відкрив ліву карту
     App->>Vis: read_card
     Vis-->>App: OrderCard (оператор підтверджує)
     App->>Game: Daylight(state, card)
     loop кожна Action
         alt Battle
-            App->>Op: кубики (RNG або ввести), хто що знімає
+            App->>Op: кубики (RNG або ввести), мечі Бродяги
+            App->>Game: resolve_battle(state, battle, rolls)
+            Game-->>App: BattleResult
+            App->>Op: скільки фігурок зняти захиснику
             App->>Rob: зняти втрати бота
         else Move / Recruit
             App->>Rob: PickPlaceTask × N
@@ -163,7 +174,8 @@ sequenceDiagram
 
 Важливо: **дії `Move` залежать від результатів попередніх `Battle`.** Тому `game` не видає всі дії на хід
 одразу. `app` викликає рушій крок за кроком (бій → оновити стан → рух → оновити стан → набір), і кожен
-крок отримує актуальний `GameState`.
+крок отримує актуальний `GameState`. Якщо відкрита карта без вартості крафту (`recruits` повертає `None`), після руху
+`app` просить відкрити наступну карту й повторює День з нею; якщо карт немає, переходить до Вечора.
 
 ## Системи координат
 

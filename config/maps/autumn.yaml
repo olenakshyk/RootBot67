@@ -7,9 +7,96 @@
 #   center_mm: clearing center in board frame (mm), taken from the board reference image
 #              (px / scale) or measured with a ruler
 #   radius_mm: approximate clearing radius
+#   center_mm/radius_mm below: from root_materials/root_board_photo/IMG_20261106_114643.jpg,
+#   perspective-corrected to a 570 x 440 mm board (origin top-left with the ROOT logo top-right,
+#   score track at the bottom; X right, Y down). Accuracy ~5 mm - re-check with a ruler if needed.
 # tests/game/test_board.py validates this file once it is filled in.
 
-clearings: []
+clearings:
+  - id: 1
+    suit: fox
+    priority: 1
+    corner: true
+    adjacent: [2, 4, 5]
+    center_mm: [57, 49]
+    radius_mm: 45
+  - id: 2
+    suit: rabbit
+    priority: 5
+    corner: false
+    adjacent: [1, 3]
+    center_mm: [313, 40]
+    radius_mm: 35
+  - id: 3
+    suit: mouse
+    priority: 2
+    corner: true
+    adjacent: [2, 4, 8]
+    center_mm: [501, 95]
+    radius_mm: 40
+  - id: 4
+    suit: rabbit
+    priority: 10
+    corner: false
+    adjacent: [1, 3, 6]
+    center_mm: [234, 128]
+    radius_mm: 38
+  - id: 5
+    suit: mouse
+    priority: 9
+    corner: false
+    adjacent: [1, 6, 9]
+    center_mm: [63, 175]
+    radius_mm: 45
+  - id: 6
+    suit: fox
+    priority: 12
+    corner: false
+    adjacent: [4, 5, 7, 9, 11]
+    center_mm: [186, 248]
+    radius_mm: 33
+  - id: 7
+    suit: mouse
+    priority: 11
+    corner: false
+    adjacent: [6, 8, 12]
+    center_mm: [367, 212]
+    radius_mm: 42
+  - id: 8
+    suit: fox
+    priority: 6
+    corner: false
+    adjacent: [3, 7, 12]
+    center_mm: [518, 225]
+    radius_mm: 42
+  - id: 9
+    suit: rabbit
+    priority: 4
+    corner: true
+    adjacent: [5, 6, 10]
+    center_mm: [64, 365]
+    radius_mm: 36
+  - id: 10
+    suit: fox
+    priority: 8
+    corner: false
+    adjacent: [9, 11]
+    center_mm: [210, 392]
+    radius_mm: 35
+  - id: 11
+    suit: mouse
+    priority: 7
+    corner: false
+    adjacent: [6, 10, 12]
+    center_mm: [330, 345]
+    radius_mm: 38
+  - id: 12
+    suit: rabbit
+    priority: 3
+    corner: true
+    adjacent: [7, 8, 11]
+    center_mm: [478, 388]
+    radius_mm: 38
 
 # Example entry:
 # clearings:
