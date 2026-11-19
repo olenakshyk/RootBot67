@@ -30,7 +30,7 @@ board:
   reference_image: data/reference/board_autumn.png
   # Outer board size in mm [long side, short side], measured once. Origin: board corner on the
   # far side from the robot, on the left; X along the long side, Y towards the robot.
-  size_mm: [0, 0]            # TBD
+  size_mm: [570, 440]
   detector:                  # TBD: tune on real frames
     ratio_test: 0.75         # Lowe's ratio test for keypoint matches
     ransac_reproj_px: 3.0    # RANSAC inlier threshold, reference image px
@@ -45,3 +45,14 @@ supply:
 
 game:
   dice: software             # software | manual
+  birdsong:
+    points_per_clearing: 2   # VP for each clearing the bot rules ...
+    min_warriors: 3          # ... and where it has at least this many warriors
+  move:
+    stay_warriors: 3         # a ruled clearing with more warriors sends all but this many away
+  recruit:
+    total_warriors: 25       # all bot warriors; supply = this minus warriors on the map
+  evening:
+    schedule_size: 5         # draw order cards until the Schedule of Orders has this many
+  traits:
+    card_given_points: 1     # Poor Manual Dexterity: VP when a player would give the bot a card

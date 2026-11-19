@@ -4,6 +4,7 @@ on:
   push:
     branches: [main]
   pull_request:
+  workflow_dispatch:         # manual run: Actions -> CI -> Run workflow
 
 jobs:
   test:
@@ -20,5 +21,4 @@ jobs:
           ruff format --check .
           ruff check .
       - name: Test
-        # Exit code 5 = no tests collected yet; remove the fallback once tests exist
-        run: pytest || [ $? -eq 5 ]
+        run: pytest
