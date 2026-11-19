@@ -22,8 +22,14 @@ robot:
 camera:
   source: realsense          # realsense | folder
   folder: data/samples       # where to read frames from if source: folder
-  index: 0
   resolution: [1920, 1080]
+  fps: 30
+  serial: null               # RealSense serial number, if several cameras are connected
+  exposure: null             # manual color exposure in RealSense units (null = auto); print with scripts/check_camera.py
+  white_balance: null        # manual white balance, K (null = auto)
+  warmup_frames: 30          # frames dropped after start while auto exposure settles
+  flush_frames: 3            # frames dropped before each capture (may be from before the arm stopped)
+  timeout_ms: 5000           # no frame this long -> error
   intrinsics_file: config/calibration/camera.yaml
   # Scan poses (x, y, z, roll, pitch, yaw; mm, deg; robot base frame) from which the whole board is seen - TBD
   scan_poses: []

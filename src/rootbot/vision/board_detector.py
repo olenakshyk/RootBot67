@@ -40,6 +40,7 @@ class BoardHomography:
     to_board: Matrix  # 3x3: піксель кадру -> мм дошки
     frame_size: tuple[int, int]  # ширина, висота кадру, px
     board_size_mm: tuple[float, float]  # ширина, висота дошки, мм
+    inliers: int = 0  # скільки пар кадр ↔ еталон узгоджуються з гомографією (якість)
 
     def to_board_mm(self, x: float, y: float) -> BoardPoint:
         """Піксель кадру -> точка на дошці, мм."""
@@ -126,7 +127,7 @@ class BoardDetector:
             return None
         to_board = np.diag([1 / self.px_per_mm, 1 / self.px_per_mm, 1.0]) @ to_ref
         h, w = frame.shape[:2]
-        return BoardHomography(to_board, (w, h), self.board_size_mm)
+        return BoardHomography(to_board, (w, h), self.board_size_mm, int(mask.sum()))
 
     def _features(self, image: npt.NDArray[np.uint8]) -> tuple[list[tuple[float, float]], Any]:
         gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY) if image.ndim == 3 else image
