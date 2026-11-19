@@ -1,0 +1,21 @@
+# Усі залежності проєкту (гра + камера + робот + інструменти розробки).
+# Встановлення: pip install -r requirements.txt
+# Джерело істини - pyproject.toml: змінюючи залежності там, оновіть і цей файл.
+
+# Ядро
+numpy>=1.26
+pyyaml>=6.0
+
+# Камера (vision)
+opencv-contrib-python>=4.9
+
+# Робот (robot)
+xarm-python-sdk>=1.14
+
+# Розробка (dev)
+pytest>=8
+pytest-cov>=5
+ruff>=0.6
+
+# Сам пакет rootbot у режимі редагування, щоб працювали імпорти `from rootbot...`
+-e .
