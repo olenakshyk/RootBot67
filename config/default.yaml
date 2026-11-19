@@ -19,6 +19,8 @@ robot:
     z: [-20, 400]
 
 camera:
+  source: realsense          # realsense | folder
+  folder: data/samples       # where to read frames from if source: folder
   index: 0
   resolution: [1920, 1080]
   intrinsics_file: config/calibration/camera.yaml

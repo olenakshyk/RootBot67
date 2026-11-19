@@ -15,7 +15,7 @@ jobs:
         with:
           python-version: "3.11"
       - name: Install
-        run: pip install -e ".[dev]"
+        run: pip install -e ".[dev,vision]"   # vision: OpenCV for the board detector tests
       - name: Lint
         run: |
           ruff format --check .
