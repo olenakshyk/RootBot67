@@ -1,6 +1,7 @@
 # Default settings. Override locally in config/local.yaml (not committed).
 
 robot:
+  mock: false                # true — без справжньої руки, рухи пишуться в лог
   ip: "192.168.1.xxx"        # set in config/local.yaml
   speed_mm_s: 100            # TCP speed during play
   debug_speed_mm_s: 50       # TCP speed when testing new motion code
@@ -24,6 +25,8 @@ camera:
   index: 0
   resolution: [1920, 1080]
   intrinsics_file: config/calibration/camera.yaml
+  # Scan poses (x, y, z, roll, pitch, yaw; mm, deg; robot base frame) from which the whole board is seen - TBD
+  scan_poses: []
 
 board:
   map_file: config/maps/autumn.yaml
