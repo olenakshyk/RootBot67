@@ -1,0 +1,18 @@
+# Template for config/local.yaml: copy it and fill in.
+#   cp config/local.example.yaml config/local.yaml
+# config/local.yaml is not committed and overrides config/default.yaml key by key.
+# Keep only what differs on this workstation: a full copy would hide later changes to default.yaml.
+
+robot:
+  ip: "192.168.1.xxx"        # xArm controller IP (sticker on the control box or xArm Studio)
+  # mock: true               # no arm: motions are only logged
+
+camera:
+  # source: folder           # no camera: frames from camera.folder
+  # folder: data/samples
+  # serial: "000000000000"   # RealSense serial number, only if several cameras are connected
+  # exposure: 156            # fixed exposure and white balance (printed by scripts/check_camera.py);
+  # white_balance: 4600      # without them the camera adjusts itself and frames from different poses differ
+
+# logging:
+#   level: debug             # also saves every scan frame next to the log
