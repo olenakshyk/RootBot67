@@ -5,9 +5,11 @@
 # Ядро
 numpy>=1.26
 pyyaml>=6.0
+py_trees>=2.2
 
-# Камера (vision)
+# Камера (vision, camera)
 opencv-contrib-python>=4.9
+pyrealsense2>=2.55          # RealSense; wheel-и є лише до Python 3.14
 
 # Робот (robot)
 xarm-python-sdk>=1.14
