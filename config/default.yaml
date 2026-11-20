@@ -37,6 +37,7 @@ board:
     ratio_test: 0.75         # Lowe's ratio test for keypoint matches
     ransac_reproj_px: 3.0    # RANSAC inlier threshold, reference image px
     min_inliers: 40          # fewer -> board not found, fall back to the last good homography
+    min_homography_det: 1.0e-9  # |det| below -> degenerate homography (board squashed to a line), not found
   max_shift_mm: 3            # warn the operator if the board moved since board -> robot calibration
   warp_px_per_mm: 2
   board_to_robot_file: config/calibration/board_to_robot.yaml
@@ -58,3 +59,7 @@ game:
     schedule_size: 5         # draw order cards until the Schedule of Orders has this many
   traits:
     card_given_points: 1     # Poor Manual Dexterity: VP when a player would give the bot a card
+
+startup:
+  retries: 3                 # скільки разів повторити, якщо помилка тимчасова
+  retry_delay_s: 2

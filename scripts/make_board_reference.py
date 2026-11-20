@@ -80,7 +80,7 @@ def click_corners(img: np.ndarray) -> Corners:
 def check_clearings(ref: np.ndarray, map_file: Path, px_per_mm: float) -> np.ndarray:
     """Кола галявин з карти поверх еталона: якщо не лягли на галявини, еталон повернутий."""
     check = ref.copy()
-    for c in yaml.safe_load(open(map_file))["clearings"]:
+    for c in yaml.safe_load(map_file.read_text(encoding="utf-8"))["clearings"]:
         x, y = (round(v * px_per_mm) for v in c["center_mm"])
         cv2.circle(check, (x, y), round(c["radius_mm"] * px_per_mm), RED, 2)
         cv2.putText(check, str(c["id"]), (x - 8, y + 8), cv2.FONT_HERSHEY_SIMPLEX, 0.8, RED, 2)
@@ -99,6 +99,7 @@ def check_on_frames(
         ratio_test=params["ratio_test"],
         ransac_reproj_px=params["ransac_reproj_px"],
         min_inliers=params["min_inliers"],
+        min_homography_det=params["min_homography_det"],
     )
     camera = FolderCamera(folder)
     out.mkdir(parents=True, exist_ok=True)
@@ -206,7 +207,9 @@ def main() -> None:
         image_size_px=[ref.shape[1], ref.shape[0]],
         corners_px=[[round(x, 1), round(y, 1)] for x, y in corners] if corners else None,
     )
-    yaml.safe_dump(meta, open(a.out / f"{a.name}.yaml", "w"), allow_unicode=True, sort_keys=False)
+    (a.out / f"{a.name}.yaml").write_text(
+        yaml.safe_dump(meta, allow_unicode=True, sort_keys=False), encoding="utf-8"
+    )
     print(f"saved: {a.out / (a.name + '.png')} and {a.name}.yaml")
 
     # 4. Перевірка орієнтації: кола галявин з карти поверх еталона мають лягти на галявини.
