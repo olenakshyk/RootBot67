@@ -6,6 +6,10 @@ robot:
   speed_mm_s: 100            # TCP speed during play
   debug_speed_mm_s: 50       # TCP speed when testing new motion code
   acc_mm_s2: 500
+  joint_speed_deg_s: 20      # joint motions (taught poses: scan, home)
+  debug_joint_speed_deg_s: 10  # scripts/check_arm.py and first runs of new motion code
+  joint_acc_deg_s2: 200
+  home_joints_deg: null      # 7 joint angles (deg) of the home pose; null = arm.home() stays in place - TBD
   home_pose_mm: [300, 0, 300, 180, 0, 0]   # x, y, z, roll, pitch, yaw (deg) - TBD
   # Heights relative to table surface (table_z comes from calibration)
   heights_mm:

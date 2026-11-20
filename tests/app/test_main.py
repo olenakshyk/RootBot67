@@ -77,4 +77,5 @@ def test_main_starts_with_mocks(tmp_path, monkeypatch):
 
 
 def test_main_stops_on_fatal(tmp_path):
-    assert main_mod.main(["--config", str(_config(tmp_path, **{"robot.mock": False}))]) == 1
+    missing = str(tmp_path / "no_such_folder")  # camera.folder не існує -> FatalError
+    assert main_mod.main(["--config", str(_config(tmp_path, **{"camera.folder": missing}))]) == 1
