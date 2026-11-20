@@ -31,6 +31,10 @@ desktop.ini
 .env
 config/local.yaml
 
+# --- Somatic gripper driver (внутрішній протокол Somatic — не шаримо) ---
+src/rootbot/robot/gripper_somatic.py
+tests/robot/test_gripper_somatic.py
+
 # --- Calibration (specific to each workstation) ---
 config/calibration/*.yaml
 !config/calibration/example.yaml
