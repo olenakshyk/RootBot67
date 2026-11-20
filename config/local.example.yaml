@@ -8,6 +8,7 @@ robot:
   # mock: true               # no arm: motions are only logged
 
 camera:
+  # source: pipewire         # RealSense via PipeWire (Linux): works on USB 2, needs no pyrealsense2
   # source: folder           # no camera: frames from camera.folder
   # folder: data/samples
   # serial: "000000000000"   # RealSense serial number, only if several cameras are connected

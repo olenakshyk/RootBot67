@@ -1,8 +1,8 @@
 """Перевірка камери: кадр -> чи знаходить BoardDetector дошку, скільки її видно, які галявини.
 
-Камера та, що в конфігу (camera.source: realsense | folder), тож без камери можна перевірити на теці
-з кадрами. Для кожного кадру зберігає сам кадр і накладення (контур дошки, галявини з мапи)
-у data/camera_check/<час>/ і друкує підсумок.
+Камера та, що в конфігу (camera.source: realsense | pipewire | folder), тож без камери можна
+перевірити на теці з кадрами. Для кожного кадру зберігає сам кадр і накладення (контур дошки,
+галявини з мапи) у data/camera_check/<час>/ і друкує підсумок.
 
     python scripts/check_camera.py                    # 1 кадр
     python scripts/check_camera.py --frames 5         # 5 кадрів через --interval с
@@ -27,7 +27,7 @@ from rootbot.config import ROOT, load_config
 from rootbot.game.board import Board, create_board
 from rootbot.vision.board_detector import BoardDetector, BoardHomography, create_board_detector
 from rootbot.vision.board_mask import BoardMask
-from rootbot.vision.camera import Frame, RealSenseCamera, create_camera
+from rootbot.vision.camera import Frame, PipeWireCamera, RealSenseCamera, create_camera
 
 RED, YELLOW, GREEN = (0, 0, 255), (0, 255, 255), (0, 200, 0)
 
@@ -51,6 +51,8 @@ def main() -> None:
     detector = create_board_detector(cfg)
     camera = create_camera(cfg)
     print(f"camera: {cfg['camera']['source']}, frames -> {out}")
+    if isinstance(camera, PipeWireCamera):
+        print("pipewire: " + " ".join(camera.command))
 
     try:
         if isinstance(camera, RealSenseCamera):
@@ -63,7 +65,7 @@ def main() -> None:
                     time.sleep(a.interval)
                 check(camera.capture(), i, detector, board, cfg, out)
     finally:
-        if isinstance(camera, RealSenseCamera):
+        if isinstance(camera, (RealSenseCamera, PipeWireCamera)):
             camera.close()
 
 

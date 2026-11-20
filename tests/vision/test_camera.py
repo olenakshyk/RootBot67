@@ -1,4 +1,4 @@
-"""RealSenseCamera з фейковим pyrealsense2: справжня камера й SDK не потрібні."""
+"""RealSenseCamera з фейковим pyrealsense2, PipeWireCamera з фейковим процесом: без камери."""
 
 import sys
 from types import SimpleNamespace
@@ -8,7 +8,14 @@ import pytest
 
 from rootbot.common.errors import FatalError, TemporaryError
 from rootbot.config import load_config
-from rootbot.vision.camera import RealSenseCamera, create_camera, create_realsense_camera
+from rootbot.vision.camera import (
+    PipeWireCamera,
+    RealSenseCamera,
+    create_camera,
+    create_realsense_camera,
+    find_pipewire_node,
+    pipewire_command,
+)
 
 
 class FakeSensor:
@@ -146,4 +153,80 @@ def test_without_pyrealsense2_is_fatal(monkeypatch):
     cfg = load_config()
     cfg["camera"]["source"] = "realsense"
     with pytest.raises(FatalError, match="pyrealsense2"):
+        create_camera(cfg)
+
+
+# --- PipeWireCamera: замість gst-launch-1.0 — python, що пише кадри в stdout ---
+
+W, H = 6, 4
+
+
+def frames_command(n, *, delay=0.0, fail=None):
+    """Процес, що пише n кадрів W×H (кадр i заповнений числом i), потім (за `fail`) — помилку."""
+    script = (
+        "import sys, time\n"
+        f"for i in range(1, {n} + 1):\n"
+        f"    sys.stdout.buffer.write(bytes([i]) * {W * H * 3}); sys.stdout.flush()\n"
+        f"    time.sleep({delay})\n"
+        + (f"sys.stderr.write({fail!r}); sys.exit(1)\n" if fail else "time.sleep(30)\n")
+    )
+    return [sys.executable, "-c", script]
+
+
+def test_pipewire_warmup_and_fresh_frame():
+    cam = PipeWireCamera(
+        frames_command(20, delay=0.02), resolution=(W, H), warmup_frames=3, flush_frames=2
+    )
+    try:
+        frame = cam.capture()
+        assert frame.shape == (H, W, 3) and frame.dtype == np.uint8
+        assert frame[0, 0, 0] >= 4 + 2  # після 4 кадрів старту ще flush_frames + 1
+        frame[:] = 0  # копія, можна змінювати
+    finally:
+        cam.close()
+    assert cam.process.poll() is not None
+
+
+def test_pipewire_process_exit_is_temporary():
+    with pytest.raises(TemporaryError, match="target not found"):
+        PipeWireCamera(frames_command(0, fail="ERROR: target not found"), resolution=(W, H))
+
+
+def test_pipewire_no_frame_is_temporary():
+    cam = PipeWireCamera(frames_command(1), resolution=(W, H), timeout_ms=200)
+    try:
+        with pytest.raises(TemporaryError, match="no frame"):
+            cam.capture()
+    finally:
+        cam.close()
+
+
+def node(name, description, formats, media_class="Video/Source"):
+    props = {"media.class": media_class, "node.name": name, "node.description": description}
+    return {"info": {"props": props, "params": {"EnumFormat": [{"format": f} for f in formats]}}}
+
+
+def test_find_pipewire_color_node():
+    dump = [
+        node("laptop", "Integrated Camera (V4L2)", ["YUY2"]),
+        node("rs_depth", "Intel(R) RealSense(TM) Depth Camera 435 (V4L2)", []),
+        node("rs_ir", "Intel(R) RealSense(TM) Depth Camera 435 (V4L2)", ["GRAY8", "UYVY"]),
+        node("rs_color", "Intel(R) RealSense(TM) Depth Camera 435 (V4L2)", ["YUY2"]),
+        {"type": "PipeWire:Interface:Link", "info": {}},
+    ]
+    assert find_pipewire_node(dump, "RealSense", "YUY2") == "rs_color"
+    assert find_pipewire_node(dump[:3], "RealSense", "YUY2") is None
+
+
+def test_pipewire_command():
+    cmd = pipewire_command("v4l2_input.usb-0_5_1.3", (1920, 1080), 8)
+    assert "target-object=v4l2_input.usb-0_5_1.3" in cmd
+    assert "video/x-raw,width=1920,height=1080,framerate=8/1" in cmd
+    assert cmd[-2:] == ["fdsink", "fd=1"]
+
+
+def test_pipewire_has_no_manual_exposure():
+    cfg = load_config()
+    cfg["camera"].update(source="pipewire", exposure=150)
+    with pytest.raises(FatalError, match="pipewire"):
         create_camera(cfg)

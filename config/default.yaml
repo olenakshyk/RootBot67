@@ -20,7 +20,7 @@ robot:
     z: [-20, 400]
 
 camera:
-  source: realsense          # realsense | folder
+  source: realsense          # realsense | pipewire (same RealSense via PipeWire, Linux, works on USB 2) | folder
   folder: data/samples       # where to read frames from if source: folder
   resolution: [1920, 1080]
   fps: 30
@@ -31,6 +31,11 @@ camera:
   flush_frames: 3            # frames dropped before each capture (may be from before the arm stopped)
   timeout_ms: 5000           # no frame this long -> error
   intrinsics_file: config/calibration/camera.yaml
+  pipewire:                  # source: pipewire (GStreamer pipewiresrc); no exposure / white balance control
+    node: null               # PipeWire node name (pw-cli info <id>); null = find it (it depends on the USB port)
+    match: RealSense         # automatic search: video source whose description contains this ...
+    format: YUY2             # ... and which gives this format (RealSense color; depth / IR give others)
+    fps: 8                   # 1920x1080 color is at most 8 fps over USB 2 (1280x720: 15)
   # Scan poses (x, y, z, roll, pitch, yaw; mm, deg; robot base frame) from which the whole board is seen - TBD
   scan_poses: []
   max_rechecks: 4            # how many times the detector may ask to look again before it must answer
