@@ -43,6 +43,14 @@ camera:
   # Scan poses (x, y, z, roll, pitch, yaw; mm, deg; robot base frame) from which the whole board is seen - TBD
   scan_poses: []
   max_rechecks: 4            # how many times the detector may ask to look again before it must answer
+  settle_s: 0.5              # pause after the arm stops, before a frame (vibrations)
+  explore:                   # scripts/explore_scan_poses.py: candidates around the start pose (no calibration)
+    shift_mm: 80             # start shifted by +-this in x and y (robot base frame) ...
+    lift_mm: 100             # ... lifted by this (sees more of the board) ...
+    tilt_deg: 12             # ... tilted by +-this in roll and pitch (another view angle)
+    max_joint_step_deg: 60   # skip a candidate whose joints differ more from the start (the arm would flip)
+    keep: 7                  # how many poses to keep
+    poses_file: config/calibration/scan_poses.yaml
 
 board:
   map_file: config/maps/autumn.yaml
