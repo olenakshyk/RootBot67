@@ -1,4 +1,5 @@
-# Спільні типи: масті, фракції, ID галявин, кількість фігурок, карта наказу, точка на дошці (мм).
+# Спільні типи: масті, фракції, вид фігурки, ID галявин, кількість фігурок, карта наказу,
+# точка на дошці (мм).
 # Це контракт між модулями (docs/architecture.md#ключові-інтерфейси): змінюємо лише через PR,
 # який переглядають власники всіх модулів, що їх використовують.
 from __future__ import annotations
@@ -25,6 +26,18 @@ class Faction(Enum):
     VAGABOND = "vagabond"
     RIVERFOLK = "riverfolk"
     LIZARDS = "lizards"
+
+
+class PieceKind(Enum):
+    """Вид фігурки, який розпізнає зір."""
+
+    WARRIOR = "warrior"
+    BUILDING = "building"
+    TOKEN = "token"
+    PAWN = "pawn"  # фігурка Бродяги
+    KEEP = "keep"  # Фортеця котів (жетон)
+    SCORE = "score"  # маркер на доріжці рахунку
+    DIE = "die"
 
 
 @dataclass
