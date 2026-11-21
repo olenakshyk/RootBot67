@@ -59,8 +59,11 @@ class PieceDetectorModel(Protocol):
 class StubPieceDetectorModel:
     """Заглушка: нічого не знаходить. Замінити справжньою моделлю (YOLO тощо)."""
 
+    def __init__(self) -> None:
+        # один раз на старті, а не на кожен огляд — інакше засмічує лог
+        log.warning("PieceDetectorModel: stub, no pieces will be detected")
+
     def detect(self, frames: list[Frame]) -> list[list[PieceBox]]:
-        log.warning(f"PieceDetectorModel: stub, no pieces on {len(frames)} frames")
         return [[] for _ in frames]
 
 
