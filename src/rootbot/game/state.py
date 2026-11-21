@@ -3,7 +3,7 @@
 # Див. docs/game-rules.md.
 from __future__ import annotations
 
-from dataclasses import dataclass, field, fields
+from dataclasses import dataclass, field, fields, replace
 
 from rootbot.common.types import ClearingId, Faction, PieceCounts
 from rootbot.game.board import Board
@@ -25,6 +25,31 @@ class GameState:
     scores: dict[Faction, int] = field(default_factory=dict)  # ПО; кого немає, той має 0
 
     def __post_init__(self) -> None:
+        errors = self._validate()
+        if errors:
+            raise GameStateError("invalid game state:\n  " + "\n  ".join(errors))
+
+    def update(
+        self,
+        *,
+        pieces: dict[ClearingId, dict[Faction, PieceCounts]],
+        keep_clearing: ClearingId | None,
+        scores: dict[Faction, int],
+        clearings: list[ClearingId] | None = None,
+    ) -> None:
+        """Новий огляд з камери. Камера — джерело істини, програма пам'ятає лише невидиме:
+        - фігурки — з камери, лише для галявин, які огляд побачив (і лише `clearings`, якщо
+          задано); галявини, яких камера не бачила, лишаються як були;
+        - Keep — з камери, а якщо не видно, лишається попередній;
+        - рахунки людей — з камери, свій рахунок бот веде сам.
+        """
+        fresh = copy_pieces(pieces)
+        for clearing in fresh if clearings is None else clearings:
+            if clearing in fresh:
+                self.pieces[clearing] = fresh[clearing]
+        if keep_clearing is not None:
+            self.keep_clearing = keep_clearing
+        self.scores = {f: s for f, s in scores.items() if f != BOT} | {BOT: self.scores.get(BOT, 0)}
         errors = self._validate()
         if errors:
             raise GameStateError("invalid game state:\n  " + "\n  ".join(errors))
@@ -68,6 +93,11 @@ class GameState:
             default=None,
         )
 
+    def add_warriors(self, clearing: ClearingId, count: int, faction: Faction = BOT) -> None:
+        """Додати (або зняти, якщо count < 0) воїнів фракції на галявині; менше нуля не буває."""
+        here = self.pieces.setdefault(clearing, {}).setdefault(faction, PieceCounts())
+        here.warriors = max(here.warriors + count, 0)
+
     def clearings_with(self, faction: Faction, *, warriors_only: bool = False) -> list[ClearingId]:
         """Галявини, де фракція має хоч одну фігурку (чи воїна), у порядку пріоритету."""
         count = (lambda c: c.warriors) if warriors_only else _total
@@ -99,6 +129,13 @@ class GameState:
             if score < 0:
                 errors.append(f"scores: negative score for {faction.value}")
         return errors
+
+
+def copy_pieces(
+    pieces: dict[ClearingId, dict[Faction, PieceCounts]],
+) -> dict[ClearingId, dict[Faction, PieceCounts]]:
+    """Глибока копія фігурок: зміни в копії не зачіпають оригінал."""
+    return {c: {f: replace(n) for f, n in here.items()} for c, here in pieces.items()}
 
 
 def _presence(counts: PieceCounts) -> int:

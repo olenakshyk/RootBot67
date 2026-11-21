@@ -195,3 +195,26 @@ def test_reports_all_errors(board):
         GameState(board, scores={EYRIE: -1}, keep_clearing=ClearingId(0))
     assert "negative score" in str(exc.value)
     assert "keep_clearing" in str(exc.value)
+
+
+# --- update з огляду ---
+
+
+def test_update_takes_pieces_and_others_scores_from_camera(board):
+    s = GameState(board, pieces={C: {BOT: pc(w=2)}}, scores={BOT: 7, EYRIE: 3})
+    s.update(pieces={C: {EYRIE: pc(w=1)}}, keep_clearing=None, scores={BOT: 0, EYRIE: 5})
+    assert s.counts(C, BOT).warriors == 0 and s.counts(C, EYRIE).warriors == 1
+    assert s.scores == {EYRIE: 5, BOT: 7}  # свій рахунок бот веде сам
+
+
+def test_update_keeps_keep_if_not_seen(board):
+    s = GameState(board, keep_clearing=C)
+    s.update(pieces={}, keep_clearing=None, scores={})
+    assert s.keep_clearing == C
+
+
+def test_partial_update_touches_only_given_clearings(board):
+    other = ClearingId(1)
+    s = GameState(board, pieces={C: {BOT: pc(w=2)}, other: {BOT: pc(w=4)}})
+    s.update(pieces={C: {}}, keep_clearing=None, scores={}, clearings=[C])
+    assert s.counts(C, BOT).warriors == 0 and s.counts(other, BOT).warriors == 4
