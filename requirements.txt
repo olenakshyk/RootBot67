@@ -9,6 +9,10 @@ pyyaml>=6.0
 # Камера (vision)
 opencv-contrib-python>=4.9
 
+# Модель фігурок (ml-model), лише для vision.piece_model.type: yolo.
+# Закоментовано, бо тягне torch (кілька ГБ) - розкоментуйте, якщо потрібна YOLO-модель.
+# ultralytics>=8.3
+
 # Робот (robot)
 xarm-python-sdk>=1.14
 
