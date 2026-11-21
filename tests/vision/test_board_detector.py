@@ -8,7 +8,7 @@ import pytest
 from rootbot.common.types import BoardPoint
 from rootbot.vision.board_detector import BoardDetector
 
-BOARD_MM = (580, 440)
+BOARD_MM = (570, 440)  # board.size_mm
 PX_PER_MM = 1.0
 
 
@@ -33,7 +33,12 @@ def reference():
 @pytest.fixture(scope="module")
 def detector(reference):
     return BoardDetector(
-        reference, PX_PER_MM, ratio_test=0.75, ransac_reproj_px=3.0, min_inliers=40
+        reference,
+        PX_PER_MM,
+        ratio_test=0.75,
+        ransac_reproj_px=3.0,
+        min_inliers=40,
+        min_homography_det=1e-9,
     )
 
 

@@ -17,6 +17,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from functools import cached_property
 from pathlib import Path
 from typing import Any
 
@@ -46,9 +47,14 @@ class BoardHomography:
         p = self.to_board @ np.array([x, y, 1.0])
         return BoardPoint(float(p[0] / p[2]), float(p[1] / p[2]))
 
+    @cached_property
+    def to_frame(self) -> Matrix:
+        """3x3: мм дошки -> піксель кадру (обернена до to_board, рахується один раз)."""
+        return np.linalg.inv(self.to_board)
+
     def to_frame_px(self, point: BoardPoint) -> tuple[float, float]:
         """Точка дошки, мм -> піксель кадру."""
-        p = np.linalg.inv(self.to_board) @ np.array([point.x, point.y, 1.0])
+        p = self.to_frame @ np.array([point.x, point.y, 1.0])
         return float(p[0] / p[2]), float(p[1] / p[2])
 
     def visible(self) -> list[BoardPoint]:
@@ -82,6 +88,7 @@ class BoardDetector:
         ratio_test: float,
         ransac_reproj_px: float,
         min_inliers: int,
+        min_homography_det: float,
     ) -> None:
         self.px_per_mm = px_per_mm
         h, w = reference.shape[:2]
@@ -89,6 +96,7 @@ class BoardDetector:
         self.ratio_test = ratio_test
         self.ransac_reproj_px = ransac_reproj_px
         self.min_inliers = min_inliers
+        self.min_homography_det = min_homography_det
 
         # ? the main algorithm to find and encode visual features
         # ? (Scale-Invariant Feature Transform)
@@ -122,7 +130,10 @@ class BoardDetector:
         if found is None:
             return None
         to_ref = np.asarray(found, dtype=np.float64)
-        if int(mask.sum()) < self.min_inliers or abs(np.linalg.det(to_ref)) < 1e-9:
+        if (
+            int(mask.sum()) < self.min_inliers
+            or abs(np.linalg.det(to_ref)) < self.min_homography_det
+        ):
             return None
         to_board = np.diag([1 / self.px_per_mm, 1 / self.px_per_mm, 1.0]) @ to_ref
         h, w = frame.shape[:2]
@@ -152,4 +163,5 @@ def create_board_detector(cfg: dict) -> BoardDetector:
         ratio_test=params["ratio_test"],
         ransac_reproj_px=params["ransac_reproj_px"],
         min_inliers=params["min_inliers"],
+        min_homography_det=params["min_homography_det"],
     )

@@ -20,8 +20,8 @@ def _merge(default: dict, custom: dict) -> dict:
 
 def load_config(path: Path | None = None) -> dict:
     """config/default.yaml, а якщо є config/local.yaml, то з його значеннями поверх"""
-    cfg = yaml.safe_load(open(path or ROOT / "config" / "default.yaml"))
+    cfg = yaml.safe_load((path or ROOT / "config" / "default.yaml").read_text(encoding="utf-8"))
     local = ROOT / "config" / "local.yaml"
     if path is None and local.exists():
-        cfg = _merge(cfg, yaml.safe_load(open(local)) or {})
+        cfg = _merge(cfg, yaml.safe_load(local.read_text(encoding="utf-8")) or {})
     return cfg
