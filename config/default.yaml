@@ -27,6 +27,7 @@ camera:
   intrinsics_file: config/calibration/camera.yaml
   # Scan poses (x, y, z, roll, pitch, yaw; mm, deg; robot base frame) from which the whole board is seen - TBD
   scan_poses: []
+  max_rechecks: 4            # how many times the detector may ask to look again before it must answer
 
 board:
   map_file: config/maps/autumn.yaml
@@ -80,6 +81,7 @@ supply:
 
 game:
   dice: software             # software | manual
+  win_points: 30             # whoever reaches this many VP wins (checked at the start of a bot turn)
   birdsong:
     points_per_clearing: 2   # VP for each clearing the bot rules ...
     min_warriors: 3          # ... and where it has at least this many warriors
@@ -91,6 +93,14 @@ game:
     schedule_size: 5         # draw order cards until the Schedule of Orders has this many
   traits:
     card_given_points: 1     # Poor Manual Dexterity: VP when a player would give the bot a card
+
+logging:
+  level: info                # debug | info | warning
+  dir: logs                  # куди писати файли логу
+
+orchestrator:
+  tick_period_s: 0.1         # how often the Behaviour Tree is ticked
+  step_retries: 3            # a failed turn step is repeated this many times, then the bot waits for a human
 
 startup:
   retries: 3                 # скільки разів повторити, якщо помилка тимчасова
