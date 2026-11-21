@@ -62,6 +62,11 @@ vision:
       vagabond_score: [vagabond, score]
       die: [null, die]
   min_confidence: 0.4        # boxes below are dropped
+  sure_confidence: 0.7       # between min and sure -> "low confidence" -> recheck
+  min_coverage: 0.97         # a scan is complete when frames cover this share of the target (board / clearings)
+  clearing_margin: 0.04      # a clearing as a scan target: its circle widened by this share of the radius
+  mask_mm_per_px: 2          # resolution of the board masks for coverage
+  merge_mm: 15               # the same piece on several frames: base points closer than this are one piece
 
 supply:
   # Slots of the bot's warrior tray, board frame (mm) - TBD after tray is printed
