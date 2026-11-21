@@ -83,7 +83,7 @@ flowchart TB
 - **`board_reference`** — еталон дошки й планшета: знімок → вирівняне зображення в мм + характерні точки. Готується один раз скриптом `scripts/make_board_reference.py`. Код: [`vision/board_reference.py`](../src/rootbot/vision/board_reference.py).
 - **`geometry`** — рамка фігурки на кадрі → точка її основи → точка на площині дошки в мм ([calibration.md](calibration.md)). Код: [`vision/geometry.py`](../src/rootbot/vision/geometry.py).
 - **`camera`** — кадри з камери RealSense і її параметри; може читати кадри з диска. Код: [`vision/camera.py`](../src/rootbot/vision/camera.py).
-- **`observation`** — `BoardObservation` — що `vision` повертає в `app`: фігурки по галявинах, де стоять воїни бота, вільні місця, впевненість, зсув дошки. Код: [`vision/observation.py`](../src/rootbot/vision/observation.py).
+- **`observation`** — `BoardObservation` — що `vision` повертає в `app`: фігурки по галявинах, де стоять воїни бота, вільні місця, впевненість, поза дошки в системі робота (`board_pose`). Код: [`vision/observation.py`](../src/rootbot/vision/observation.py).
 
 Детектор фігурок навчається окремо в [`ml/`](ml.md); до програми доходять лише ваги в `models/`.
 
