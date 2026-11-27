@@ -3,7 +3,7 @@
 Постав руку в позу, з якої камера бачить дошку (перевірити: scripts/check_camera.py), і запусти.
 Скрипт обчислює кандидатів (зсуви на ±shift, підйом, нахили; camera.explore), для кожного —
 обернена кінематика на контролері, рух на debug-швидкості, кадр, пошук дошки. Потім жадібно
-вибирає до `keep` поз, що разом покривають найбільше дошки, і пише їх у camera.explore.poses_file.
+вибирає до `keep` поз, що разом покривають найбільше дошки, і пише їх у camera.scan_poses_file.
 Кадри й підсумок — у data/explore_poses/<час>/. Наприкінці рука повертається в початкову позу.
 
     python scripts/explore_scan_poses.py          # кожен рух чекає Enter (s — пропустити позу)
@@ -130,7 +130,7 @@ def main() -> None:
         "poses": [results[name] for name in chosen],
     }
     (out / "all_poses.yaml").write_text(yaml.safe_dump(list(results.values()), sort_keys=False))
-    path = ROOT / ex["poses_file"]
+    path = ROOT / cfg["camera"]["scan_poses_file"]
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(yaml.safe_dump(data, sort_keys=False))
     print(f"saved: {path}\nframes: {out}")

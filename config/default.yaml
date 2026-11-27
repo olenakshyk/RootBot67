@@ -40,8 +40,9 @@ camera:
     match: RealSense         # automatic search: video source whose description contains this ...
     format: YUY2             # ... and which gives this format (RealSense color; depth / IR give others)
     fps: 8                   # 1920x1080 color is at most 8 fps over USB 2 (1280x720: 15)
-  # Scan poses (x, y, z, roll, pitch, yaw; mm, deg; robot base frame) from which the whole board is seen - TBD
-  scan_poses: []
+  # Scan pose library (joints + what is seen from each), written by scripts/explore_scan_poses.py, not committed;
+  # the first pose starts every scan. No file -> the arm does not move, one frame from where it stands
+  scan_poses_file: config/calibration/scan_poses.yaml
   max_rechecks: 4            # how many times the detector may ask to look again before it must answer
   settle_s: 0.5              # pause after the arm stops, before a frame (vibrations)
   explore:                   # scripts/explore_scan_poses.py: candidates around the start pose (no calibration)
@@ -49,8 +50,7 @@ camera:
     lift_mm: 100             # ... lifted by this (sees more of the board) ...
     tilt_deg: 12             # ... tilted by +-this in roll and pitch (another view angle)
     max_joint_step_deg: 60   # skip a candidate whose joints differ more from the start (the arm would flip)
-    keep: 7                  # how many poses to keep
-    poses_file: config/calibration/scan_poses.yaml
+    keep: 7                  # how many poses to keep (in camera.scan_poses_file)
 
 board:
   map_file: config/maps/autumn.yaml

@@ -1,33 +1,46 @@
 """Scanner — огляд дошки: рука стає в оглядові пози, на кожній зупинці кадр (ADR 0005).
 
 Зовнішній опис: docs/architecture.md -> robot -> scan;
-докладно: docs/robot.md -> «Огляд і уточнення камерою».
+докладно: docs/robot.md -> «Огляд дошки».
 
-Спершу огляд з поз config camera.scan_poses (майже згори). Якщо детектор просить переглянути
-(RecheckRequest), Scanner сам вирішує як: поза над вказаними галявинами, ближче чи під іншим
-кутом залежно від причини. Скільки разів — camera.max_rechecks, цикл веде Orchestrator.
+Пози — з бібліотеки camera.scan_poses_file (scripts/explore_scan_poses.py): для кожної відомо,
+яку частину дошки з неї видно і які галявини цілком. Рух — за кутами суглобів з бібліотеки,
+без оберненої кінематики під час гри. Вибір пози:
+- scan(None) — лише початкова поза (перша в бібліотеці);
+- "not visible" — жадібно пози, що найбільше перекривають request.uncovered, поки є що додати;
+- інші причини ("disagree", "low confidence", "after battles") — пози, з яких вказані галявини
+  видно цілком; спершу ті, що ще не використовувались у цьому огляді.
+Огляд — від scan(None) або запиту не з переглядів (наприклад, "after battles") до наступного такого.
+Скільки разів переглядати — camera.max_rechecks, цикл веде Orchestrator.
 
 Режим debug (logging.level: debug): кожен кадр зберігається в теку поруч із файлом логу
 (logs/<час запуску>/scan_<NNN>_frame_<i>.jpg, JPEG 95) разом зі scan_<NNN>.yaml — причина огляду,
-галявини запиту, час. Для розбору помилок і даних для тестів.
+галявини запиту, пози, час. Для розбору помилок і даних для тестів.
 
-Поки поз немає (TBD) і рука не рухається: один кадр з поточного місця на кожен огляд.
-Заплановано: поза камери до кожного кадру (поза фланця x hand-eye), кадр зблизька перед захватом,
-перевірка після place.
+Без бібліотеки поз рука не рухається: один кадр з поточного місця на кожен огляд.
+Заплановано: кадр зблизька перед захватом, перевірка після place.
 """
 
 import logging
+import time
 from datetime import datetime
 from pathlib import Path
 
 import cv2
 import yaml
 
+from rootbot.common.types import ClearingId
+from rootbot.config import ROOT
 from rootbot.robot.arm import Arm
+from rootbot.robot.scan_poses import ScanPose, load_scan_poses
+from rootbot.vision.board_mask import BoardMask
 from rootbot.vision.camera import Camera, Frame
 from rootbot.vision.observation import RecheckRequest
 
 log = logging.getLogger(__name__)
+
+# причини переглядів у межах одного огляду; решта запитів починає новий огляд
+RECHECKS = ("not visible", "disagree", "low confidence")
 
 
 class Scanner:
@@ -35,29 +48,92 @@ class Scanner:
         self,
         arm: Arm,
         camera: Camera,
-        scan_poses: list[list[float]],
+        poses: list[ScanPose],
+        *,
+        settle_s: float = 0.0,
         frames_dir: Path | None = None,
     ) -> None:
         self.arm = arm
         self.camera = camera
-        self.scan_poses = scan_poses
+        self.poses = poses
+        self.settle_s = settle_s  # пауза після руху перед кадром (вібрації)
         self.frames_dir = frames_dir  # куди зберігати кадри (debug); None — не зберігати
         self._scans = 0  # скільки оглядів зроблено за запуск
+        self._used: set[str] = set()  # пози, з яких уже знімали в цьому огляді
 
     def scan(self, request: RecheckRequest | None = None) -> list[Frame]:
-        """Огляд усієї дошки згори або перегляд того, що просить детектор."""
+        """Огляд з початкової пози або перегляд того, що просить детектор."""
+        if request is None or request.reason not in RECHECKS:
+            self._used = set()
         if request is None:
             log.info("scan: board")
-            frames = [self.camera.capture() for _ in self.scan_poses or [[]]]
         else:
             log.info(f"scan: clearings {request.clearings} ({request.reason})")
-            frames = [self.camera.capture() for _ in request.clearings]
+        if self.poses:
+            poses = self.choose(request)
+            frames = [self.shoot(pose) for pose in poses]
+            self._used |= {pose.name for pose in poses}
+        else:
+            poses, frames = [], [self.camera.capture()]
         self._scans += 1
         if self.frames_dir is not None:
-            self._save(frames, request)
+            self._save(frames, request, poses)
         return frames
 
-    def _save(self, frames: list[Frame], request: RecheckRequest | None) -> None:
+    def choose(self, request: RecheckRequest | None) -> list[ScanPose]:
+        """Пози для огляду чи перегляду (рука не рухається)."""
+        if request is None:
+            poses = [self.poses[0]]
+        elif request.reason == "not visible" and request.uncovered is not None:
+            poses = self._covering(request.uncovered)
+        else:
+            poses = self._seeing(request.clearings)
+        if not poses:
+            log.warning(f"scan: no scan pose helps with {request}, no frames")
+        else:
+            log.info(f"scan: poses {[p.name for p in poses]}")
+        return poses
+
+    def shoot(self, pose: ScanPose, speed_deg_s: float | None = None) -> Frame:
+        """Стати в позу, дочекатися, поки рука заспокоїться, і зняти кадр."""
+        self.arm.move_joints(pose.joints, speed_deg_s)
+        time.sleep(self.settle_s)
+        return self.camera.capture()
+
+    def _covering(self, uncovered: BoardMask) -> list[ScanPose]:
+        """Жадібно ще не використані пози, що додають найбільше непокритого, поки є що додати."""
+        left = uncovered
+        rest = [p for p in self.poses if p.name not in self._used]
+        chosen: list[ScanPose] = []
+        while rest and left.area():
+            gain = {p.name: (left & left.polygon(p.sees)).area() for p in rest}
+            best = max(rest, key=lambda p: gain[p.name])
+            if gain[best.name] == 0:
+                break
+            chosen.append(best)
+            left = left - left.polygon(best.sees)
+            rest.remove(best)
+        return chosen
+
+    def _seeing(self, clearings: list[ClearingId]) -> list[ScanPose]:
+        """Пози, з яких галявини видно цілком: спершу нові для огляду, далі ті, що бачать більше."""
+        left = set(clearings)
+        rest = list(self.poses)
+        chosen: list[ScanPose] = []
+        while left:
+            useful = [p for p in rest if p.clearings & left]
+            if not useful:
+                log.warning(f"scan: no scan pose sees clearings {sorted(left)} whole")
+                break
+            best = max(useful, key=lambda p: (p.name not in self._used, len(p.clearings & left)))
+            chosen.append(best)
+            left -= best.clearings
+            rest.remove(best)
+        return chosen
+
+    def _save(
+        self, frames: list[Frame], request: RecheckRequest | None, poses: list[ScanPose]
+    ) -> None:
         """Кадри огляду + опис (debug)."""
         assert self.frames_dir is not None
         self.frames_dir.mkdir(parents=True, exist_ok=True)
@@ -68,6 +144,7 @@ class Scanner:
         meta = {
             "reason": "board" if request is None else request.reason,
             "clearings": [] if request is None else [int(c) for c in request.clearings],
+            "poses": [p.name for p in poses],
             "frames": len(frames),
             "time": f"{datetime.now():%Y-%m-%d %H:%M:%S}",
         }
@@ -76,4 +153,11 @@ class Scanner:
 
 
 def create_scanner(cfg: dict, arm: Arm, camera: Camera, frames_dir: Path | None = None) -> Scanner:
-    return Scanner(arm, camera, cfg["camera"]["scan_poses"], frames_dir)
+    path = ROOT / cfg["camera"]["scan_poses_file"]
+    poses = load_scan_poses(path) if path.exists() else []
+    if not poses:
+        log.warning(
+            f"no scan poses in {path} (scripts/explore_scan_poses.py): "
+            "every scan is one frame from where the arm stands"
+        )
+    return Scanner(arm, camera, poses, settle_s=cfg["camera"]["settle_s"], frames_dir=frames_dir)

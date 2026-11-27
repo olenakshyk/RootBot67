@@ -35,6 +35,15 @@ def test_circle_and_union():
     assert abs(both.coverage([view(w=200)]) - 0.5) < 0.05  # видно лише перше коло
 
 
+def test_polygon_even_past_the_board_edge():
+    board = BoardMask.whole(BOARD_MM, 2)
+    half = board.polygon(
+        [BoardPoint(-50, -50), BoardPoint(290, -50), BoardPoint(290, 500), BoardPoint(-50, 500)]
+    )
+    assert abs(half.area() / board.area() - 0.5) < 0.01
+    assert half.area() == board.visible_on([view(w=290)]).area()
+
+
 def test_uncovered_part_and_its_centers():
     board = BoardMask.whole(BOARD_MM, 2)
     uncovered = board - board.visible_on([view(w=290)])

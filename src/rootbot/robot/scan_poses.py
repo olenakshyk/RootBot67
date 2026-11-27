@@ -3,9 +3,16 @@
 Калібрування дошка -> робот (#22) немає, тож де дошка відносно руки, невідомо. Тому кандидати —
 зсуви й нахили початкової пози (з неї камера вже бачить дошку), а корисність кожного з них
 перевіряє камера: яку частину дошки видно (BoardMask) і які галявини цілком.
-Рух і зйомка — у scripts/explore_scan_poses.py.
+Рух і зйомка — у scripts/explore_scan_poses.py; результат — бібліотека поз (camera.scan_poses_file),
+з якої Scanner вибирає, куди стати (ScanPose, load_scan_poses).
 """
 
+from dataclasses import dataclass
+from pathlib import Path
+
+import yaml
+
+from rootbot.common.types import BoardPoint, ClearingId
 from rootbot.vision.board_mask import BoardMask
 
 Pose = list[float]  # x, y, z (мм), roll, pitch, yaw (градуси) у системі основи робота
@@ -60,3 +67,27 @@ def select_poses(
         covered = covered | masks[best]
         rest.remove(best)
     return chosen
+
+
+@dataclass(frozen=True)
+class ScanPose:
+    """Оглядова поза з бібліотеки: куди стати і що звідти видно (за explore_scan_poses.py)."""
+
+    name: str
+    joints: list[float]  # кути суглобів, градуси
+    sees: list[BoardPoint]  # видима частина дошки (чотирикутник, мм дошки)
+    clearings: frozenset[ClearingId]  # галявини, видимі цілком
+
+
+def load_scan_poses(path: Path) -> list[ScanPose]:
+    """Бібліотека поз у порядку з файлу (перша — початкова)."""
+    data = yaml.safe_load(path.read_text()) or {}
+    return [
+        ScanPose(
+            name=p["name"],
+            joints=[float(j) for j in p["joints"]],
+            sees=[BoardPoint(float(x), float(y)) for x, y in p["sees"]],
+            clearings=frozenset(ClearingId(c) for c in p["clearings"]),
+        )
+        for p in data.get("poses") or []
+    ]
