@@ -102,6 +102,12 @@ orchestrator:
   tick_period_s: 0.1         # how often the Behaviour Tree is ticked
   step_retries: 3            # a failed turn step is repeated this many times, then the bot waits for a human
 
+operator_server:            # HTTP API for the operator app (app/operator_api.py, ADR 0006)
+  host: 0.0.0.0              # all interfaces: the app runs on a phone/tablet in the same Wi-Fi
+  port: 8000                 # 0 -> any free port (tests)
+  cors_origins: ["*"]        # web pages allowed to call the API from a browser; [] -> none
+  start_timeout_s: 5         # wait this long for the server to listen, then retry (startup.retries)
+
 startup:
   retries: 3                 # скільки разів повторити, якщо помилка тимчасова
   retry_delay_s: 2

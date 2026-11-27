@@ -3,7 +3,8 @@
 Зовнішній опис: docs/architecture.md -> app -> OperatorServer;
 вимоги: docs/requirements/operator-server.md.
 
-Як влаштовано: FastAPI (uvicorn) працюватиме у фоновому потоці, Orchestrator — у головному.
+Як влаштовано: FastAPI (uvicorn, app/operator_api.py) працює у фоновому потоці, Orchestrator —
+у головному.
 Сигнали: методи-обробники кладуть їх у queue.Queue (потокобезпечна),
 Orchestrator бере next_signal().
 Статус для застосунку: BotStatus під threading.Lock; Orchestrator оновлює set_status(),
@@ -11,8 +12,8 @@ Orchestrator бере next_signal().
 
 Сигнали, які згодом замінить робот, позначені AUT-n: docs/autonomy.md.
 
-Поки є лише ця частина в одній програмі; HTTP (шляхи, конфіг, FastAPI) — пізніше.
-Методи для застосунку вже названі так, як їх викликатимуть обробники HTTP.
+Тут немає нічого про HTTP: обробники в operator_api.py лише викликають методи нижче,
+тож у тестах Orchestrator сигнали можна подавати напряму.
 """
 
 from __future__ import annotations
@@ -41,6 +42,14 @@ class CardGiven:
 
 
 @dataclass(frozen=True)
+class KeepRemoved:
+    """Keep знищено під час ходу людини (тимчасово: AUT-13).
+
+    Камера не відрізняє «Keep знято» від «Keep не побачила», тому без сигналу бот пам'ятає старий.
+    """
+
+
+@dataclass(frozen=True)
 class OrderCardRevealed:
     """Відкрита карта наказу. Тимчасово її вводить людина (AUT-1)."""
 
@@ -55,7 +64,7 @@ class DiceRolled:
     vagabond_swords: int | None = None  # непошкоджені мечі, якщо захищається Бродяга
 
 
-Signal = YourTurn | EndGame | CardGiven | OrderCardRevealed | DiceRolled
+Signal = YourTurn | EndGame | CardGiven | KeepRemoved | OrderCardRevealed | DiceRolled
 
 
 @dataclass(frozen=True)
@@ -85,6 +94,9 @@ class OperatorServer:
 
     def card_given(self) -> None:
         self._signals.put(CardGiven())
+
+    def keep_removed(self) -> None:
+        self._signals.put(KeepRemoved())
 
     def order_card(self, card: OrderCard) -> None:
         self._signals.put(OrderCardRevealed(card))

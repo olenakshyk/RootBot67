@@ -62,10 +62,11 @@ flowchart TB
   рухає. Вимоги: [requirements/orchestrator.md](requirements/orchestrator.md). Код: [`app/orchestrator.py`](../src/rootbot/app/orchestrator.py).
 - **`MovePlanner`** — дії бота → конкретні переміщення: яких котів узяти й куди поставити (вільне місце в колі галявини шукає сам), жетон рахунку.
   Код: [`app/move_planner.py`](../src/rootbot/app/move_planner.py).
-- **`OperatorServer`** — зв'язок із застосунком оператора: приймає сигнали й віддає поточний стан бота. Працює у
-  фоновому потоці тієї самої програми; сигнали — через `queue.Queue`, стан — спільний об'єкт під `threading.Lock`
-  ([ADR 0006](decisions/0006-operator-app.md)). Вимоги й методи: [requirements/operator-server.md](requirements/operator-server.md).
-  Код: [`app/operator_ui.py`](../src/rootbot/app/operator_ui.py).
+- **`OperatorServer`** — зв'язок із застосунком оператора: приймає сигнали й віддає поточний стан бота через HTTP API
+  (FastAPI + uvicorn у фоновому потоці тієї самої програми, хост і порт у `config/default.yaml` → `operator_server`);
+  сигнали — через `queue.Queue`, стан — спільний об'єкт під `threading.Lock`
+  ([ADR 0006](decisions/0006-operator-app.md)). Вимоги, методи й шляхи HTTP: [requirements/operator-server.md](requirements/operator-server.md).
+  Код: [`app/operator_ui.py`](../src/rootbot/app/operator_ui.py), [`app/operator_api.py`](../src/rootbot/app/operator_api.py).
 
 ### game — правила бота: стан дошки + карта наказу → дії
 
