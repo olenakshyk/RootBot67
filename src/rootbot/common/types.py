@@ -50,10 +50,20 @@ class PieceCounts:
     pawn: int = 0  # Бродяга (Vagabond)
 
 
+CARD_SUITS = (Suit.FOX, Suit.RABBIT, Suit.MOUSE, Suit.BIRD)  # масть карти
+CRAFT_SUITS = (Suit.FOX, Suit.RABBIT, Suit.MOUSE, Suit.ANY)  # символи вартості крафту
+
+
 @dataclass(frozen=True)
 class OrderCard:
     suit: Suit
     craft_cost: tuple[Suit, ...]  # порожній кортеж означає «немає вартості крафту»
+
+    def __post_init__(self) -> None:
+        if self.suit not in CARD_SUITS:
+            raise ValueError(f"card suit must be one of {[s.value for s in CARD_SUITS]}")
+        if any(s not in CRAFT_SUITS for s in self.craft_cost):
+            raise ValueError(f"craft cost symbols must be in {[s.value for s in CRAFT_SUITS]}")
 
 
 @dataclass(frozen=True)

@@ -23,6 +23,7 @@ from rootbot.app.operator_ui import (
     CardGiven,
     DiceRolled,
     EndGame,
+    KeepRemoved,
     OperatorServer,
     OrderCardRevealed,
     YourTurn,
@@ -266,6 +267,8 @@ class ReadSignals(Step):
                     ctx.game_over = True
                 case CardGiven():
                     ctx.cards_given += 1
+                case KeepRemoved():  # тимчасово: AUT-13
+                    ctx.state.keep_clearing = None
                 case OrderCardRevealed(card=card):
                     ctx.order_cards.append(card)
                 case DiceRolled():

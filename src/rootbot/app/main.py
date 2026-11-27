@@ -6,11 +6,11 @@ python -m rootbot.app.main
 Що робить:
 1. читає конфігурацію (config/default.yaml + config/local.yaml);
 2. створює компоненти: камера, рука, Manipulator, Scanner, мапа, PieceDetectorModel (раз:
-   ваги й прогрів), Detector, MovePlanner, OperatorServer;
+   ваги й прогрів), Detector, MovePlanner, OperatorServer і його HTTP API (фоновий потік);
 3. передає їх Orchestrator і запускає його;
 4. помилки створення: TemporaryError -> повтор (startup.retries),
    FatalError -> зупинка з повідомленням;
-5. при будь-якому завершенні (кінець, помилка, Ctrl+C) рука йде в home.
+5. при будь-якому завершенні (кінець, помилка, Ctrl+C) рука йде в home, HTTP API зупиняється.
 
 Аргумент: --config <config>
 Коди виходу: 0 — нормально, 1 — фатальна помилка, 130 — Ctrl+C.
@@ -29,6 +29,7 @@ from pathlib import Path
 from typing import TypeVar
 
 from rootbot.app.move_planner import create_move_planner
+from rootbot.app.operator_api import start_operator_api
 from rootbot.app.operator_ui import create_operator_server
 from rootbot.app.orchestrator import Orchestrator
 from rootbot.common.errors import FatalError, TemporaryError
@@ -86,7 +87,7 @@ def main(argv: list[str] | None = None) -> int:
     log_file = setup_logging(cfg)
     log.info(f"start, log: {log_file}")
 
-    arm = camera = None
+    arm = camera = api = None
     try:
         camera = create_with_retry("camera", lambda: create_camera(cfg), cfg)
         arm = create_with_retry("arm", lambda: create_arm(cfg), cfg)
@@ -104,6 +105,7 @@ def main(argv: list[str] | None = None) -> int:
         detector = create_with_retry("Detector", lambda: create_detector(cfg, board, model), cfg)
         planner = create_with_retry("MovePlanner", lambda: create_move_planner(cfg, board), cfg)
         server = create_with_retry("OperatorServer", lambda: create_operator_server(cfg), cfg)
+        api = create_with_retry("operator API", lambda: start_operator_api(server, cfg), cfg)
         Orchestrator(
             arm=arm,
             scanner=scanner,
@@ -122,6 +124,8 @@ def main(argv: list[str] | None = None) -> int:
         log.info("===KeyboardInterrupt(Ctrl+C)===")
         return 130
     finally:
+        if api is not None:
+            api.stop()
         if arm is not None:
             arm.home()
         log.info("===END===")

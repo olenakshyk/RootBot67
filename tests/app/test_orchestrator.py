@@ -185,6 +185,14 @@ def test_card_given_scores_when_idle():
     assert o.ctx.state.scores[BOT] == 1
 
 
+def test_keep_removed_by_operator():
+    o, fakes, server = make([BEFORE_BATTLE])
+    o.ctx.state.keep_clearing = C(1)
+    server.keep_removed()
+    o.tree.tick()
+    assert o.ctx.state.keep_clearing is None
+
+
 def test_win_points_end_the_game():
     o, fakes, server = make([obs({}, scores={EYRIE: 30})])
     server.your_turn()
