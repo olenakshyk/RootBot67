@@ -77,6 +77,7 @@ supply:
 
 game:
   dice: software             # software | manual
+  die_max: 3                 # highest value on a battle die (dice are 0..3)
   birdsong:
     points_per_clearing: 2   # VP for each clearing the bot rules ...
     min_warriors: 3          # ... and where it has at least this many warriors
