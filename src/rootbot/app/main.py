@@ -5,12 +5,13 @@ python -m rootbot.app.main
 
 Що робить:
 1. читає конфігурацію (config/default.yaml + config/local.yaml);
-2. створює компоненти: камера, рука, Manipulator, Scanner, мапа, PieceDetectorModel (раз:
-   ваги й прогрів), Detector, MovePlanner, OperatorServer;
+2. створює компоненти: камера, рука, гріппер (одразу під'єднаний), Manipulator, Scanner, мапа,
+   PieceDetectorModel (раз: ваги й прогрів), Detector, MovePlanner, OperatorServer;
 3. передає їх Orchestrator і запускає його;
 4. помилки створення: TemporaryError -> повтор (startup.retries),
    FatalError -> зупинка з повідомленням;
-5. при будь-якому завершенні (кінець, помилка, Ctrl+C) рука йде в home.
+5. при будь-якому завершенні (кінець, помилка, Ctrl+C) рука йде в home, а гріппер
+   відкривається (відпускає фігурку, якщо тримав) і від'єднується.
 
 Аргумент: --config <config>
 Коди виходу: 0 — нормально, 1 — фатальна помилка, 130 — Ctrl+C.
@@ -35,6 +36,7 @@ from rootbot.common.errors import FatalError, TemporaryError
 from rootbot.config import ROOT, load_config
 from rootbot.game.board import create_board
 from rootbot.robot.arm import Arm, create_arm
+from rootbot.robot.gripper import Gripper, create_gripper
 from rootbot.robot.manipulator import create_manipulator
 from rootbot.robot.scan import create_scanner
 from rootbot.vision.camera import create_camera
@@ -43,6 +45,7 @@ from rootbot.vision.piece_detector_model import create_piece_detector_model
 
 log = logging.getLogger("rootbot")
 T = TypeVar("T")
+GRIPPER_OPEN = 1.0
 
 
 def setup_logging(cfg: dict) -> Path:
@@ -86,11 +89,14 @@ def main(argv: list[str] | None = None) -> int:
     log_file = setup_logging(cfg)
     log.info(f"start, log: {log_file}")
 
-    arm = camera = server = None
+    arm = camera = gripper = server = None
     try:
         camera = create_with_retry("camera", lambda: create_camera(cfg), cfg)
         arm = create_with_retry("arm", lambda: create_arm(cfg), cfg)
-        manipulator = create_with_retry("Manipulator", lambda: create_manipulator(cfg, arm), cfg)
+        gripper = create_with_retry("gripper", lambda: create_connected_gripper(cfg), cfg)
+        manipulator = create_with_retry(
+            "Manipulator", lambda: create_manipulator(cfg, arm, gripper), cfg
+        )
         # debug: кадри сканера — у теку поруч із логом (logs/<час>/), щоб розбирати помилки
         debug = cfg["logging"]["level"].lower() == "debug"
         frames_dir = log_file.with_suffix("") if debug else None
@@ -124,7 +130,16 @@ def main(argv: list[str] | None = None) -> int:
     finally:
         if arm is not None:
             home_or_report(arm, server)
+        if gripper is not None:
+            release_or_report(gripper, server)
         log.info("===END===")
+
+
+def create_connected_gripper(cfg: dict) -> Gripper:
+    """Гріппер за config (robot.gripper), уже під'єднаний."""
+    gripper = create_gripper(cfg)
+    gripper.connect()
+    return gripper
 
 
 def home_or_report(arm: Arm, server: OperatorServer | None) -> None:
@@ -135,6 +150,21 @@ def home_or_report(arm: Arm, server: OperatorServer | None) -> None:
         log.exception("arm home failed")
         if server is not None:
             server.set_status(error=f"arm home failed: {e}")
+
+
+def release_or_report(gripper: Gripper, server: OperatorServer | None) -> None:
+    """Гріппер наприкінці відкривається й від'єднується; кожен збій лише в лозі й у статусі."""
+    steps = (
+        ("gripper open", lambda: gripper.set_position(GRIPPER_OPEN)),
+        ("gripper disconnect", gripper.disconnect),
+    )
+    for what, step in steps:
+        try:
+            step()
+        except Exception as e:
+            log.exception(f"{what} failed")
+            if server is not None:
+                server.set_status(error=f"{what} failed: {e}")
 
 
 if __name__ == "__main__":
