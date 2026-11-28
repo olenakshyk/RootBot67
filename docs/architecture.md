@@ -86,7 +86,7 @@ flowchart TB
 - **`camera`** — кадри для огляду: `FolderCamera` читає їх з теки на диску (`camera.source: folder`); камера RealSense — заплановано. Код: [`vision/camera.py`](../src/rootbot/vision/camera.py).
 - **`observation`** — `BoardObservation` — що `vision` повертає в `app`: кількості фігурок по галявинах (`pieces`), де стоїть кожна фігурка по фракціях (`positions`), усі зайняті точки разом із Keep (`occupied`), галявина Keep (`keep_clearing`), ПО з доріжки рахунку (`scores`, читання маркерів — заплановано), впевненість (`confidence`). Код: [`vision/observation.py`](../src/rootbot/vision/observation.py).
 
-Детектор фігурок навчається окремо в [`ml/`](ml.md); до програми доходять лише ваги в `models/`.
+Детектор фігурок навчається окремо в [`ml/`](ml.md) *(з'явиться з ML-PR)*; до програми доходять лише ваги в `models/`.
 
 ### robot — рука: огляд і перенесення фігурок
 
@@ -146,7 +146,7 @@ sequenceDiagram
 | --- | --- |
 | Системи координат, калібрування камери на руці | [calibration.md](calibration.md) |
 | Конфігурація (`config/`) | [config/default.yaml](../config/default.yaml) — коментарі біля кожного параметра |
-| ML: датасети й навчання детектора | [ml.md](ml.md), [ADR 0004](decisions/0004-ml-pipeline.md) |
+| ML: датасети й навчання детектора | [ml.md](ml.md) *(з'явиться з ML-PR)*, [ADR 0004](decisions/0004-ml-pipeline.md) *(з'явиться з ML-PR)* |
 | Вимоги до компонентів (FR / NFR) | [requirements/](requirements/) |
 | Що зараз робить людина, а згодом робот | [autonomy.md](autonomy.md) |
 | Рішення й чому так | [decisions/](decisions/) |
