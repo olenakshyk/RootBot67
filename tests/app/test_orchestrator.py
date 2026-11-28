@@ -6,8 +6,9 @@ from pathlib import Path
 import pytest
 
 from rootbot.app.move_planner import MovePlanner
-from rootbot.app.operator_ui import OperatorServer, WaitingFor
+from rootbot.app.operator_ui import OperatorServer, SignalRejected, WaitingFor
 from rootbot.app.orchestrator import Orchestrator
+from rootbot.common.errors import FatalError
 from rootbot.common.types import BoardPoint, ClearingId, Faction, OrderCard, PieceCounts, Suit
 from rootbot.config import load_config
 from rootbot.game.actions import Move
@@ -221,6 +222,57 @@ def test_failed_step_retries_then_waits_for_human():
     from_c1 = tuple(f"move {p} -> " for p in alone.positions[C(1)][BOT])
     moved = [c for c in fakes.calls if c.startswith(from_c1)]
     assert len(moved) == 2  # жодне переміщення не повторилось двічі
+
+
+def tick_with_tap_after_signals(o, tap):
+    """Один тик, у якому людина натискає вже після ReadSignals: крок цього тику відповіді ще не
+    бачить."""
+    read_signals = o.tree.root.children[0]
+    read = read_signals.step
+
+    def step():
+        status = read()
+        tap()
+        return status
+
+    read_signals.step = step
+    try:
+        o.tree.tick()
+    finally:
+        del read_signals.step
+
+
+def test_duplicate_bot_turn_in_idle_is_rejected():
+    o, fakes, server = make([BEFORE_BATTLE])
+    tick_until(o, waiting(server, WaitingFor.YOUR_TURN))
+    tick_with_tap_after_signals(o, server.your_turn)
+    with pytest.raises(SignalRejected):
+        server.your_turn()
+    o.tree.tick()
+    assert o.ctx.in_turn
+
+
+def test_duplicate_order_card_is_rejected():
+    o, fakes, server = make([BEFORE_BATTLE, AFTER_BATTLE])
+    tick_until(o, waiting(server, WaitingFor.YOUR_TURN))
+    server.your_turn()
+    tick_until(o, waiting(server, WaitingFor.ORDER_CARD))
+    tick_with_tap_after_signals(o, lambda: server.order_card(FOX_1))
+    with pytest.raises(SignalRejected):
+        server.order_card(FOX_1)
+    o.tree.tick()
+    assert o.ctx.card == FOX_1 and o.ctx.order_cards == []
+    assert waiting(server, WaitingFor.DICE)()
+
+
+def test_duplicate_dice_are_rejected():
+    o, fakes, server = start_battle([BEFORE_BATTLE, AFTER_BATTLE])
+    tick_with_tap_after_signals(o, lambda: server.dice_rolled((3, 0)))
+    with pytest.raises(SignalRejected):
+        server.dice_rolled((3, 0))
+    o.tree.tick()
+    assert o.ctx.dice == []
+    assert removing(server)()
 
 
 def start_battle(observations):
@@ -453,6 +505,45 @@ def test_failed_home_in_abort_turn_is_reported():
     o.run()
     assert not o.ctx.in_turn
     assert "arm home failed: arm stuck" in server.current_state().error
+
+
+def test_birdsong_reaching_win_points_ends_the_game_at_once():
+    o, fakes, server = make([BEFORE_BATTLE])
+    o.planner.score_track = TRACK
+    o.ctx.state.scores[BOT] = 28
+    tick_until(o, waiting(server, WaitingFor.YOUR_TURN))
+    server.your_turn()
+    tick_until(o, lambda: o.ctx.game_over)
+
+    assert fakes.calls == ["scan", "add", "detect", f"move {TRACK[28]} -> {TRACK[30]}", "home"]
+    assert o.ctx.state.scores[BOT] == 30
+    assert not o.ctx.in_turn and o.ctx.arm_actions == [] and o.planner.goals == []
+    assert server.current_state().message == "bot reached 30 VP: game over"
+
+
+def test_card_given_reaching_win_points_ends_the_game():
+    o, fakes, server = make([BEFORE_BATTLE])
+    o.planner.score_track = TRACK
+    o.ctx.state.scores[BOT] = 29
+    tick_until(o, waiting(server, WaitingFor.YOUR_TURN))
+    server.card_given()
+    tick_until(o, lambda: o.ctx.game_over)
+    o.run()
+
+    assert fakes.calls == [f"move {TRACK[29]} -> {TRACK[30]}"]
+    assert o.ctx.state.scores[BOT] == 30
+    status = server.current_state()
+    assert status.step == "game over"
+    assert status.message == "bot reached 30 VP: game over"
+
+
+@pytest.mark.parametrize(
+    ("dice", "error"),
+    [("automated", "is planned"), ("software", "unknown value 'software'")],
+)
+def test_dice_other_than_manual_stop_at_construction(dice, error):
+    with pytest.raises(FatalError, match=error):
+        make([BEFORE_BATTLE], dice=dice)
 
 
 def test_card_given_scores_when_idle():

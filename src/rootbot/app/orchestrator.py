@@ -30,6 +30,7 @@ from py_trees.common import Status
 
 from rootbot.app.move_planner import ClearingNeedsScan, MovePlanner
 from rootbot.app.operator_ui import (
+    ANSWERS,
     CardGiven,
     DiceRolled,
     EndGame,
@@ -54,6 +55,10 @@ from rootbot.vision.observation import BoardObservation, RecheckRequest
 log = logging.getLogger(__name__)
 
 
+class GameOver(Exception):
+    """Дія закінчила гру (бот набрав game.win_points ПО): крок зупиняється, хід перервано."""
+
+
 @dataclass
 class ArmAction:
     """Дія бота: переміщення руки (tasks) і зміна даних (apply), яка настає лише після них усіх."""
@@ -70,6 +75,7 @@ class TurnContext:
     # сигнали
     turn_requested: bool = False
     resume: bool = False  # «Хід бота» під час ходу: людина допомогла, продовжити
+    waiting_for: WaitingFor | None = None  # запит до людини, відповідь на який ще не прочитано
     game_over: bool = False
     cards_given: int = 0
     order_cards: list[OrderCard] = field(default_factory=list)
@@ -115,6 +121,13 @@ class Orchestrator:
         self.max_rechecks: int = cfg["camera"]["max_rechecks"]
         self.win_points: int = cfg["game"]["win_points"]
         self.schedule_size: int = cfg["game"]["evening"]["schedule_size"]
+        dice = cfg["game"]["dice"]
+        if dice == "automated":
+            raise FatalError(
+                "game.dice: 'automated' (the robot throws real dice) is planned; use 'manual'"
+            )
+        if dice != "manual":
+            raise FatalError(f"game.dice: unknown value {dice!r}; use 'manual'")
         self.ctx = TurnContext(state=GameState(board))
         self.tree = py_trees.trees.BehaviourTree(self.build_tree())
 
@@ -192,6 +205,8 @@ class Orchestrator:
     # --- спільне для кроків ---
 
     def status(self, **changes: object) -> None:
+        if "waiting_for" in changes and changes["waiting_for"] is None:
+            self.ctx.waiting_for = None
         self.server.set_status(scores=self._scores(), **changes)
 
     def observe_board(
@@ -252,19 +267,30 @@ class Orchestrator:
         self.planner.process(obs, clearings)
 
     def wait_for(self, what: WaitingFor, step: str, **changes: object) -> None:
-        """Статус «чекаю людину»: що саме потрібно (what) і на якому кроці. Лише якщо змінилося."""
-        now = self.server.current_state()
-        if now.waiting_for != what or now.step != step:
-            self.status(step=step, waiting_for=what, **changes)
+        """Статус «чекаю людину»: що саме потрібно (what) і на якому кроці. Сервер чекає what раз
+        на запит: прийнявши відповідь, він сам скидає waiting_for, і поки ReadSignals її не
+        прочитав (ctx.waiting_for), запит не взводиться вдруге — повторне натискання сервер
+        відхиляє. Той самий запит на іншому кроці лише змінює підпис кроку."""
+        if self.ctx.waiting_for == what:
+            if self.server.current_state().step != step:
+                self.status(step=step, **changes)
+            return
+        self.ctx.waiting_for = what
+        self.status(step=step, waiting_for=what, **changes)
 
     def score_action(self, points: int, reason: str) -> ArmAction:
-        """Жетон рахунку бота на points клітинок далі, потім +points ПО."""
+        """Жетон рахунку бота на points клітинок далі, потім +points ПО. Бот набрав
+        game.win_points ПО — кінець гри одразу (ctx.game_over)."""
         scores = self.ctx.state.scores
         old = scores.get(BOT, 0)
 
         def apply() -> None:
             scores[BOT] = scores.get(BOT, 0) + points
             log.info(f"score +{points} ({reason}): {scores[BOT]}")
+            if scores[BOT] >= self.win_points:
+                log.info(f"bot reached {scores[BOT]} VP: game over")
+                self.ctx.game_over = True
+                self.status(message=f"bot reached {scores[BOT]} VP: game over")
 
         return ArmAction(self.planner.score(old, old + points), apply)
 
@@ -301,7 +327,7 @@ class Orchestrator:
     def run_arm_actions(self) -> None:
         """Виконати дії з черги по черзі. Переміщення знімається з дії лише після успіху, тоді ж
         MovePlanner оновлює картину дошки (done); коли всі переміщення дії вдалися — зміна даних
-        (apply), і дія знімається з черги."""
+        (apply), і дія знімається з черги. Дія закінчила гру — GameOver."""
         while self.ctx.arm_actions:
             action = self.ctx.arm_actions[0]
             while action.tasks:
@@ -311,6 +337,8 @@ class Orchestrator:
                 action.tasks.pop(0)
             action.apply()
             self.ctx.arm_actions.pop(0)
+            if self.ctx.game_over:
+                raise GameOver()
 
     def home_or_report(self) -> None:
         """Рука в home; збій руки програму не зупиняє: він у лозі й у статусі (error)."""
@@ -340,7 +368,8 @@ class Orchestrator:
 
 
 class Step(py_trees.behaviour.Behaviour):
-    """Крок ходу: step() повертає статус; виняток (крім FatalError) — FAILURE, помилка в лозі."""
+    """Крок ходу: step() повертає статус; виняток (крім FatalError) — FAILURE, помилка в лозі.
+    GameOver — FAILURE без помилки: хід переривається (AbortTurn), як після NobodyWon."""
 
     def __init__(self, o: Orchestrator, name: str | None = None) -> None:
         super().__init__(name or type(self).__name__)
@@ -349,6 +378,8 @@ class Step(py_trees.behaviour.Behaviour):
     def update(self) -> Status:
         try:
             return self.step_scanning_unknown_clearing()
+        except GameOver:
+            return Status.FAILURE
         except FatalError:
             raise
         except Exception as e:
@@ -386,6 +417,8 @@ class ReadSignals(Step):
         ctx = self.o.ctx
         while (signal := self.o.server.next_signal()) is not None:
             log.info(f"signal: {signal}")
+            if isinstance(signal, ANSWERS):
+                ctx.waiting_for = None
             match signal:
                 case YourTurn():
                     if ctx.in_turn or ctx.arm_actions:
@@ -541,9 +574,9 @@ class WaitLossesRemoved(Step):
         if not self.waiting:
             self.o.arm.home()
             ctx.resume, self.waiting = False, True
-            self.o.status(
-                step="daylight: remove your pieces, then press Bot turn",
-                waiting_for=WaitingFor.YOUR_TURN,
+            self.o.wait_for(
+                WaitingFor.YOUR_TURN,
+                "daylight: remove your pieces, then press Bot turn",
                 message="; ".join(ctx.removals),
             )
         if not ctx.resume:
@@ -618,14 +651,14 @@ class FinishTurn(Step):
         self.o.arm.home()
         self.o.ctx.in_turn = self.o.ctx.turn_requested = False
         log.info(f"=== bot turn done, score {self.o.ctx.state.scores.get(BOT, 0)} ===")
-        self.o.status(step="idle", waiting_for=WaitingFor.YOUR_TURN)
+        self.o.wait_for(WaitingFor.YOUR_TURN, "idle")
         return Status.SUCCESS
 
 
 class AbortTurn(Step):
-    """Хід дав FAILURE: хтось набрав game.win_points ПО (NobodyWon) або впав крок без повтору
-    (StartTurn, WaitOrderCard). Рука в home (збій руки — лише в лозі й статусі), незавершені дії
-    забуто, хід завершено."""
+    """Хід дав FAILURE: хтось набрав game.win_points ПО (люди — NobodyWon, бот — GameOver, щойно
+    його ПО додано) або впав крок без повтору (StartTurn, WaitOrderCard). Рука в home (збій
+    руки — лише в лозі й статусі), незавершені дії забуто, хід завершено."""
 
     def step(self) -> Status:
         self.o.home_or_report()
@@ -633,9 +666,7 @@ class AbortTurn(Step):
         self.o.ctx.in_turn = self.o.ctx.turn_requested = False
         if not self.o.ctx.game_over:
             log.error(f"bot turn aborted: {self.o.ctx.error}")
-            self.o.status(
-                step="turn aborted", waiting_for=WaitingFor.YOUR_TURN, error=self.o.ctx.error
-            )
+            self.o.wait_for(WaitingFor.YOUR_TURN, "turn aborted", error=self.o.ctx.error)
         return Status.SUCCESS
 
 
@@ -677,7 +708,7 @@ class RetryOrAskHuman(py_trees.decorators.Decorator):
         yield from super().tick()
 
     def update(self) -> Status:
-        if self.decorated.status != Status.FAILURE:
+        if self.decorated.status != Status.FAILURE or self.o.ctx.game_over:
             return self.decorated.status
         self.failures += 1
         if self.failures <= self.o.step_retries:
