@@ -5,14 +5,14 @@
 Три публічні кроки, у такому порядку (цикли й ліміт спроб веде Orchestrator):
 1. add_frames(frames, target) — покриття, лише гомографія (board_detector), без моделі.
    Ціль огляду — BoardMask (уся дошка, галявини, розширені на vision.clearing_margin,
-   або інша маска). Повертає RecheckRequest("not visible", uncovered=маска непокритого),
+   або інша маска). Повертає RecheckRequest([NOT_VISIBLE], uncovered=маска непокритого),
    поки кадри покривають менше vision.min_coverage цілі, або None. Кадри накопичуються;
    новий огляд починається з `target` або першим add_frames після detect().
 2. detect() — перевіряє покриття (неповне — попередження в лог, розпізнає з тим, що є) і запускає
    модель (PieceDetectorModel) один раз на всіх накопичених кадрах. Повертає чернетку
    спостереження й один RecheckRequest з усіма сумнівними галявинами — або None. Причини
-   (у reason через кому): "disagree" (кадри дають різну кількість фігурок на галявині),
-   "low confidence" (рамки з впевненістю між min_confidence і sure_confidence).
+   (список reasons, у такому порядку): DISAGREE (кадри дають різну кількість фігурок на галявині),
+   LOW_CONFIDENCE (рамки з впевненістю між min_confidence і sure_confidence).
 3. refine(observation, frames) — лише після detect(): розпізнає нові кадри й оновлює галявини,
    які на них видно цілком.
 
@@ -35,7 +35,7 @@ from rootbot.game.board import Board
 from rootbot.vision.board_detector import BoardDetector, BoardHomography, create_board_detector
 from rootbot.vision.board_mask import BoardMask
 from rootbot.vision.camera import Frame
-from rootbot.vision.observation import BoardObservation, RecheckRequest
+from rootbot.vision.observation import BoardObservation, RecheckReason, RecheckRequest
 from rootbot.vision.piece_detector_model import PieceDetectorModel
 
 log = logging.getLogger(__name__)
@@ -111,7 +111,7 @@ class Detector:
     def add_frames(
         self, frames: list[Frame], *, target: BoardMask | None = None
     ) -> RecheckRequest | None:
-        """Додати кадри огляду. Повертає, чого ще не видно ("not visible"), або None — ціль покрито.
+        """Додати кадри огляду. Повертає, чого ще не видно (NOT_VISIBLE), або None — ціль покрито.
 
         `target` починає новий огляд з цією ціллю; без нього кадри додаються до поточного огляду,
         а після detect() починається новий огляд усієї дошки."""
@@ -122,7 +122,7 @@ class Detector:
         uncovered = self._uncovered()
         if uncovered is None:
             return None
-        return RecheckRequest(self._touching(uncovered), "not visible", uncovered)
+        return RecheckRequest(self._touching(uncovered), [RecheckReason.NOT_VISIBLE], uncovered)
 
     def detect(self) -> Result:
         """Розпізнати накопичені кадри огляду (модель — один раз на всіх)."""
@@ -279,15 +279,13 @@ class Detector:
     def _quality_recheck(
         self, located: list[_Located], views: list[View], covered: set[ClearingId]
     ) -> RecheckRequest | None:
-        """Усі сумнівні галявини одним запитом; reason — їхні причини через кому."""
+        """Усі сумнівні галявини одним запитом; reasons — їхні причини: DISAGREE, LOW_CONFIDENCE."""
         disagree = self._disagreeing(located, views) & covered
         low = {r.clearing for r in located if r.confidence < self.sure_confidence} & covered
         if not disagree | low:
             return None
-        reasons = [
-            name for name, found in (("disagree", disagree), ("low confidence", low)) if found
-        ]
-        return RecheckRequest(sorted(disagree | low), ", ".join(reasons))
+        found = ((RecheckReason.DISAGREE, disagree), (RecheckReason.LOW_CONFIDENCE, low))
+        return RecheckRequest(sorted(disagree | low), [reason for reason, where in found if where])
 
     def _disagreeing(self, located: list[_Located], views: list[View]) -> set[ClearingId]:
         """Галявини, на яких кадри, що бачать їх цілком, дають різну кількість фігурок."""

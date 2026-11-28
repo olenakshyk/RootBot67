@@ -50,7 +50,7 @@ from rootbot.robot.manipulator import Manipulator, PieceMoveTask
 from rootbot.robot.scan import Scanner
 from rootbot.vision.board_mask import BoardMask
 from rootbot.vision.detector import Detector
-from rootbot.vision.observation import BoardObservation, RecheckRequest
+from rootbot.vision.observation import BoardObservation, RecheckReason, RecheckRequest
 
 log = logging.getLogger(__name__)
 
@@ -251,12 +251,12 @@ class Orchestrator:
             return "board not found on any frame"
         return f"scan covers none of the requested clearings {request.clearings}"
 
-    def scan_clearings(self, clearings: list[ClearingId], reason: str) -> None:
+    def scan_clearings(self, clearings: list[ClearingId], reason: RecheckReason) -> None:
         """Частковий огляд лише `clearings`: оновлює на них GameState і MovePlanner. Keep — як
         бачить огляд."""
         obs = self.observe_board(
             target=self.detector.clearings_mask(clearings),
-            request=RecheckRequest(clearings, reason),
+            request=RecheckRequest(clearings, [reason]),
         )
         self.ctx.state.update(
             pieces=obs.pieces,
@@ -394,7 +394,7 @@ class Step(py_trees.behaviour.Behaviour):
         except ClearingNeedsScan as e:
             log.info(f"{self.name}: {e}, scanning it")
             self.o.run_arm_actions()
-            self.o.scan_clearings([e.clearing], "needs scan")
+            self.o.scan_clearings([e.clearing], RecheckReason.NEEDS_SCAN)
             return self.step()
 
     def step(self) -> Status:
@@ -594,7 +594,7 @@ class Rescan(Step):
         clearings = sorted({b.clearing for b in self.o.ctx.battles})
         if not clearings:
             return Status.SUCCESS
-        self.o.scan_clearings(clearings, "after battles")
+        self.o.scan_clearings(clearings, RecheckReason.AFTER_BATTLES)
         return Status.SUCCESS
 
 

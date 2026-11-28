@@ -12,6 +12,7 @@ RecheckRequest — що детектору варто переглянути, щ
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from enum import Enum
 
 from rootbot.common.types import BoardPoint, ClearingId, Faction, PieceCounts
 from rootbot.vision.board_mask import BoardMask
@@ -33,10 +34,22 @@ class BoardObservation:
     confidence: float = 0.0  # 0..1
 
 
+class RecheckReason(Enum):
+    """Чому галявини треба переглянути ще раз."""
+
+    NOT_VISIBLE = "not visible"  # кадри ще не покривають ціль огляду
+    DISAGREE = "disagree"  # кадри дають різну кількість фігурок на галявині
+    LOW_CONFIDENCE = "low confidence"  # рамки з впевненістю нижче sure_confidence
+    AFTER_BATTLES = "after battles"  # після битв: фігурки на галявинах змінились
+    NEEDS_SCAN = "needs scan"  # планувальнику бракує даних про галявину
+
+
 @dataclass(frozen=True)
 class RecheckRequest:
-    """Що переглянути ще раз і чому (Scanner обирає позу за причиною: інший кут, ближче, …)."""
+    """Що переглянути ще раз і чому (Scanner обирає позу за причинами: інший кут, ближче, …).
+
+    `reasons` — усі причини запиту; як їх ураховувати, вирішує модуль, що обробляє запит."""
 
     clearings: list[ClearingId]
-    reason: str  # наприклад "not visible", "disagree", "low confidence", "after battles"
-    uncovered: BoardMask | None = None  # для "not visible": яку частину дошки ще не видно
+    reasons: list[RecheckReason]
+    uncovered: BoardMask | None = None  # для NOT_VISIBLE: яку частину дошки ще не видно
