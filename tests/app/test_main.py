@@ -7,6 +7,7 @@ from rootbot.app import main as main_mod
 from rootbot.app.operator_ui import OperatorServer
 from rootbot.common.errors import FatalError, TemporaryError
 from rootbot.config import load_config
+from rootbot.robot.gripper import MockGripper
 
 CFG = {"startup": {"retries": 2, "retry_delay_s": 0}}
 
@@ -66,13 +67,14 @@ def _config(tmp_path, **overrides):
     return path
 
 
-def test_main_starts_with_mocks(tmp_path, monkeypatch):
-    def server_with_end_game(cfg):
-        server = OperatorServer(die_max=cfg["game"]["die_max"])
-        server.end_game()  # інакше Orchestrator чекав би сигналів вічно
-        return server
+def _server_with_end_game(cfg):
+    server = OperatorServer(die_max=cfg["game"]["die_max"])
+    server.end_game()  # інакше Orchestrator чекав би сигналів вічно
+    return server
 
-    monkeypatch.setattr(main_mod, "create_operator_server", server_with_end_game)
+
+def test_main_starts_with_mocks(tmp_path, monkeypatch):
+    monkeypatch.setattr(main_mod, "create_operator_server", _server_with_end_game)
     assert main_mod.main(["--config", str(_config(tmp_path))]) == 0
 
 
@@ -89,3 +91,92 @@ def test_home_failure_at_exit_is_reported():
     server = OperatorServer(die_max=6)
     main_mod.home_or_report(StuckArm(), server)
     assert server.current_state().error == "arm home failed: arm stuck"
+
+
+class RecordingGripper:
+    """Фейковий гріппер: пише виклики; fail — назви кроків, що кидають помилку."""
+
+    def __init__(self, fail: tuple[str, ...] = ()) -> None:
+        self.calls: list[str] = []
+        self.fail = fail
+
+    def _record(self, call: str) -> None:
+        self.calls.append(call)
+        if call in self.fail:
+            raise RuntimeError(f"{call} broken")
+
+    def connect(self) -> None:
+        self._record("connect")
+
+    def disconnect(self) -> None:
+        self._record("disconnect")
+
+    def set_position(self, position: float) -> float:
+        self._record(f"set_position {position}")
+        return position
+
+
+def test_main_connects_gripper_passes_it_to_manipulator_and_releases_at_exit(tmp_path, monkeypatch):
+    gripper = RecordingGripper()
+    manipulator_grippers = []
+    real_create_manipulator = main_mod.create_manipulator
+
+    def create_manipulator(cfg, arm, grip):
+        manipulator_grippers.append(grip)
+        return real_create_manipulator(cfg, arm, grip)
+
+    monkeypatch.setattr(main_mod, "create_gripper", lambda cfg: gripper)
+    monkeypatch.setattr(main_mod, "create_manipulator", create_manipulator)
+    monkeypatch.setattr(main_mod, "create_operator_server", _server_with_end_game)
+
+    assert main_mod.main(["--config", str(_config(tmp_path))]) == 0
+    assert manipulator_grippers == [gripper]
+    assert gripper.calls == ["connect", f"set_position {main_mod.GRIPPER_OPEN}", "disconnect"]
+
+
+def test_main_creates_mock_gripper_from_config(tmp_path, monkeypatch):
+    grippers = []
+    real_create_manipulator = main_mod.create_manipulator
+
+    def create_manipulator(cfg, arm, grip):
+        grippers.append(grip)
+        return real_create_manipulator(cfg, arm, grip)
+
+    monkeypatch.setattr(main_mod, "create_manipulator", create_manipulator)
+    monkeypatch.setattr(main_mod, "create_operator_server", _server_with_end_game)
+
+    assert main_mod.main(["--config", str(_config(tmp_path))]) == 0
+    assert isinstance(grippers[0], MockGripper)
+    assert grippers[0].get_position() == main_mod.GRIPPER_OPEN
+
+
+def test_gripper_failures_at_exit_are_reported_and_do_not_stop_release():
+    server = OperatorServer(die_max=6)
+    gripper = RecordingGripper(fail=(f"set_position {main_mod.GRIPPER_OPEN}", "disconnect"))
+    main_mod.release_or_report(gripper, server)
+    assert gripper.calls == [f"set_position {main_mod.GRIPPER_OPEN}", "disconnect"]
+    assert server.current_state().error == "gripper disconnect failed: disconnect broken"
+
+
+def test_gripper_open_failure_at_exit_is_reported(caplog):
+    server = OperatorServer(die_max=6)
+    gripper = RecordingGripper(fail=(f"set_position {main_mod.GRIPPER_OPEN}",))
+    main_mod.release_or_report(gripper, server)
+    assert gripper.calls == [f"set_position {main_mod.GRIPPER_OPEN}", "disconnect"]
+    assert (
+        server.current_state().error
+        == f"gripper open failed: set_position {main_mod.GRIPPER_OPEN} broken"
+    )
+    assert "gripper open failed" in caplog.text
+
+
+def test_gripper_failure_at_exit_keeps_fatal_exit_code(tmp_path, monkeypatch):
+    gripper = RecordingGripper(fail=(f"set_position {main_mod.GRIPPER_OPEN}", "disconnect"))
+    monkeypatch.setattr(main_mod, "create_gripper", lambda cfg: gripper)
+
+    def broken_planner(cfg, board):
+        raise FatalError("planner broken")
+
+    monkeypatch.setattr(main_mod, "create_move_planner", broken_planner)
+    assert main_mod.main(["--config", str(_config(tmp_path))]) == 1
+    assert gripper.calls == ["connect", f"set_position {main_mod.GRIPPER_OPEN}", "disconnect"]
