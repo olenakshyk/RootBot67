@@ -42,6 +42,7 @@ flowchart TD
     abort["AbortTurn"]:::action
     cardGiven["<b>→</b><br/><small>card given</small>"]:::control
     pending(["CardGivenPending?"]):::condition
+    retryScore{"↻ N"}:::decorator
     score["ScoreCardGiven"]:::action
     idle["Idle"]:::action
 
@@ -55,7 +56,8 @@ flowchart TD
     turn --- steps
     turn --- abort
     cardGiven --- pending
-    cardGiven --- score
+    cardGiven --- retryScore
+    retryScore --- score
 
     classDef control fill:#e8e8e8,stroke:#444,stroke-width:2px,color:#000
     classDef decorator fill:#efe3f7,stroke:#7a4a99,color:#000
@@ -66,7 +68,12 @@ flowchart TD
 
 
 - `what now`: хід бота, якщо його попросили → «Карту дано», якщо є → інакше `Idle` (чекати «Хід бота»).
-- `turn`: якщо хід дав `FAILURE` (хтось набрав 30 ПО), `AbortTurn` відправляє руку в home і завершує хід.
+- `turn`: якщо хід дав `FAILURE` — люди набрали 30 ПО (`NobodyWon?`), бот набрав 30 ПО, щойно їх додано (`↻ N`
+  тоді не повторює крок), або впав крок без повтору (`StartTurn`,
+  `WaitOrderCard`), — `AbortTurn` відправляє руку в home (збій руки — лише в лозі й статусі), забуває незавершені дії
+  й завершує хід.
+- `CardGivenPending?` — є невраховане «Карту дано» або його незавершена дія; `ScoreCardGiven` чекає
+  `orchestrator.card_given_delay_s`, потім рука пересуває жетон рахунку, і лише тоді +ПО.
 
 ### 2. Хід бота
 
@@ -83,7 +90,9 @@ flowchart TD
     birdsong["Birdsong"]:::action
     repeatDay{"↺ day"}:::decorator
     day["▸ День<br/><small>day</small>"]:::subtree
+    retryEvening{"↻ N"}:::decorator
     evening["Evening"]:::action
+    retryFinish{"↻ N"}:::decorator
     finish["FinishTurn"]:::action
 
     steps --- start
@@ -91,8 +100,10 @@ flowchart TD
     steps --- nobodyWon
     steps --- retryBirdsong
     steps --- repeatDay
-    steps --- evening
-    steps --- finish
+    steps --- retryEvening
+    steps --- retryFinish
+    retryEvening --- evening
+    retryFinish --- finish
     retryScan --- scan
     retryBirdsong --- birdsong
     repeatDay --- day
@@ -109,7 +120,8 @@ flowchart TD
   натисне «Хід бота». Тоді той самий крок іде знову.
 - `NobodyWon?` — умова: `FAILURE`, якщо хтось має `game.win_points` ПО (тоді й кінець гри).
 - `↺ day` (`RepeatDay`) — День ще раз з наступною картою, поки в Розкладі є карти.
-- Світанок і Вечір — по одному вузлу: у них немає чекання людини й окремих збоїв. День розписаний по кроках, бо
+- Світанок і Вечір — по одному вузлу: у них немає чекання людини. `FinishTurn` завершує хід лише після того, як рука
+  дійшла в home; інакше повтори й людина, а не новий хід. День розписаний по кроках, бо
   там чекання карти й кубиків і чотири різні дії руки, кожна з яких може не вдатися окремо.
 
 ### 3. День
@@ -120,6 +132,8 @@ flowchart TD
     waitCard["WaitOrderCard"]:::action
     retryBattles{"↻ N"}:::decorator
     battles["Battles"]:::action
+    retryWaitLosses{"↻ N"}:::decorator
+    waitLosses["WaitLossesRemoved"]:::action
     retryRescan{"↻ N"}:::decorator
     rescan["Rescan"]:::action
     retryMoves{"↻ N"}:::decorator
@@ -129,10 +143,12 @@ flowchart TD
 
     day --- waitCard
     day --- retryBattles
+    day --- retryWaitLosses
     day --- retryRescan
     day --- retryMoves
     day --- retryRecruits
     retryBattles --- battles
+    retryWaitLosses --- waitLosses
     retryRescan --- rescan
     retryMoves --- moves
     retryRecruits --- recruits
@@ -147,6 +163,8 @@ flowchart TD
 - `WaitOrderCard` — чекає карту наказу: людина відкриває ліву карту Розкладу й вводить у застосунку її масть і
   вартість крафту (тимчасово; згодом рука з камерою). Поки карти немає — `RUNNING`.
 - `Battles` — по черзі кожен бій: `RUNNING`, поки людина не введе кубики; втрати бота прибирає рука.
+- `WaitLossesRemoved` — після боїв рука в home, у статусі — що зняти кожній фракції людей; `RUNNING`, поки люди не
+  натиснуть «Хід бота». Без боїв — одразу `SUCCESS`.
 - `Rescan` — огляд лише галявин боїв (втрати людей прибирають люди).
 
 **Позначення (для всіх схем):**

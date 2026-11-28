@@ -1,12 +1,14 @@
 """Orchestrator з фейковими модулями: перевіряємо порядок дій і реакцію на сигнали."""
 
+from dataclasses import replace
 from pathlib import Path
 
 import pytest
 
 from rootbot.app.move_planner import MovePlanner
-from rootbot.app.operator_ui import OperatorServer, WaitingFor
+from rootbot.app.operator_ui import OperatorServer, SignalRejected, WaitingFor
 from rootbot.app.orchestrator import Orchestrator
+from rootbot.common.errors import FatalError
 from rootbot.common.types import BoardPoint, ClearingId, Faction, OrderCard, PieceCounts, Suit
 from rootbot.config import load_config
 from rootbot.game.actions import Move
@@ -26,9 +28,13 @@ class Fakes:
         self.observations = observations
         self.missing: list = []  # що add_frames по черзі каже «ще не видно»; порожньо — видно все
         self.moves_to_fail = 0
+        self.homes_to_fail = 0
 
     # Arm
     def home(self) -> None:
+        if self.homes_to_fail:
+            self.homes_to_fail -= 1
+            raise RuntimeError("arm stuck")
         self.calls.append("home")
 
     # Scanner
@@ -82,14 +88,19 @@ def bot_positions(pieces):
 
 
 def obs(pieces, scores=None) -> BoardObservation:
+    """Огляд усієї дошки: детектор пише кожну видиму галявину, також порожню."""
     return BoardObservation(
-        pieces=pieces, positions=bot_positions(pieces), scores=scores or {}, confidence=1.0
+        pieces={c: {} for c in BOARD.clearings} | pieces,
+        positions=bot_positions(pieces),
+        scores=scores or {},
+        confidence=1.0,
     )
 
 
 def make(observations, **game):
     cfg = load_config()
     cfg["orchestrator"]["tick_period_s"] = 0
+    cfg["orchestrator"]["card_given_delay_s"] = 0
     cfg["game"].update(game)
     board = load_board(AUTUMN)
     fakes = Fakes(observations)
@@ -119,13 +130,17 @@ def waiting(server, what):
     return lambda: server.current_state().waiting_for == what
 
 
+def removing(server):
+    return lambda: server.current_state().step.startswith("daylight: remove")
+
+
 BEFORE_BATTLE = obs(
     {
         C(1): {BOT: PieceCounts(warriors=5), EYRIE: PieceCounts(warriors=1)},
         C(2): {EYRIE: PieceCounts(warriors=2)},
     }
 )
-AFTER_BATTLE = obs({C(1): {BOT: PieceCounts(warriors=5)}})
+AFTER_BATTLE = obs({C(1): {BOT: PieceCounts(warriors=5)}, C(2): {EYRIE: PieceCounts(warriors=2)}})
 FOX_1 = OrderCard(Suit.FOX, (Suit.FOX,))
 
 
@@ -143,15 +158,18 @@ def test_full_turn_order():
     server.order_card(FOX_1)
     tick_until(o, waiting(server, WaitingFor.DICE))
     server.dice_rolled((3, 0))  # бот 3 влучання, Династія 0
-    tick_until(o, waiting(server, WaitingFor.YOUR_TURN))
+    tick_until(o, removing(server))
+    server.your_turn()
+    tick_until(o, lambda: not o.ctx.in_turn)
 
     c1, c2 = center(o, 1), center(o, 2)
     p0, p1 = AFTER_BATTLE.positions[C(1)][BOT][:2]
     moves = [c for c in fakes.calls if c.startswith("move")]
-    assert fakes.calls[:6] == [
+    assert fakes.calls[:7] == [
         "scan",
         "add",
         "detect",
+        "home",
         "scan [1]",
         "add",
         "detect",
@@ -206,6 +224,108 @@ def test_failed_step_retries_then_waits_for_human():
     assert len(moved) == 2  # жодне переміщення не повторилось двічі
 
 
+def tick_with_tap_after_signals(o, tap):
+    """Один тик, у якому людина натискає вже після ReadSignals: крок цього тику відповіді ще не
+    бачить."""
+    read_signals = o.tree.root.children[0]
+    read = read_signals.step
+
+    def step():
+        status = read()
+        tap()
+        return status
+
+    read_signals.step = step
+    try:
+        o.tree.tick()
+    finally:
+        del read_signals.step
+
+
+def test_duplicate_bot_turn_in_idle_is_rejected():
+    o, fakes, server = make([BEFORE_BATTLE])
+    tick_until(o, waiting(server, WaitingFor.YOUR_TURN))
+    tick_with_tap_after_signals(o, server.your_turn)
+    with pytest.raises(SignalRejected):
+        server.your_turn()
+    o.tree.tick()
+    assert o.ctx.in_turn
+
+
+def test_duplicate_order_card_is_rejected():
+    o, fakes, server = make([BEFORE_BATTLE, AFTER_BATTLE])
+    tick_until(o, waiting(server, WaitingFor.YOUR_TURN))
+    server.your_turn()
+    tick_until(o, waiting(server, WaitingFor.ORDER_CARD))
+    tick_with_tap_after_signals(o, lambda: server.order_card(FOX_1))
+    with pytest.raises(SignalRejected):
+        server.order_card(FOX_1)
+    o.tree.tick()
+    assert o.ctx.card == FOX_1 and o.ctx.order_cards == []
+    assert waiting(server, WaitingFor.DICE)()
+
+
+def test_duplicate_dice_are_rejected():
+    o, fakes, server = start_battle([BEFORE_BATTLE, AFTER_BATTLE])
+    tick_with_tap_after_signals(o, lambda: server.dice_rolled((3, 0)))
+    with pytest.raises(SignalRejected):
+        server.dice_rolled((3, 0))
+    o.tree.tick()
+    assert o.ctx.dice == []
+    assert removing(server)()
+
+
+def start_battle(observations):
+    o, fakes, server = make(observations)
+    tick_until(o, waiting(server, WaitingFor.YOUR_TURN))
+    server.your_turn()
+    tick_until(o, waiting(server, WaitingFor.ORDER_CARD))
+    server.order_card(FOX_1)
+    tick_until(o, waiting(server, WaitingFor.DICE))
+    return o, fakes, server
+
+
+def test_battle_losses_wait_for_bot_turn_before_rescan():
+    o, fakes, server = start_battle([BEFORE_BATTLE, AFTER_BATTLE])
+    server.dice_rolled((3, 0))
+    tick_until(o, removing(server))
+    for _ in range(3):
+        o.tree.tick()
+
+    status = server.current_state()
+    assert status.waiting_for == WaitingFor.YOUR_TURN
+    assert status.message == f"{EYRIE.value}: remove 1 in clearing 1"
+    assert fakes.calls[-1] == "home"
+    assert "scan [1]" not in fakes.calls
+
+    server.your_turn()
+    tick_until(o, lambda: not o.ctx.in_turn)
+    assert fakes.calls[fakes.calls.index("home") + 1] == "scan [1]"
+
+
+def test_bot_turn_pressed_before_the_wait_does_not_skip_it():
+    o, fakes, server = start_battle([BEFORE_BATTLE, AFTER_BATTLE])
+    o.ctx.resume = True
+    server.dice_rolled((3, 0))
+    tick_until(o, removing(server))
+    for _ in range(3):
+        o.tree.tick()
+
+    assert removing(server)()
+    assert "scan [1]" not in fakes.calls
+
+
+def test_no_battles_no_wait_for_removals():
+    alone = obs({C(1): {BOT: PieceCounts(warriors=5)}})
+    o, fakes, server = make([alone])
+    tick_until(o, waiting(server, WaitingFor.YOUR_TURN))
+    server.your_turn()
+    tick_until(o, waiting(server, WaitingFor.ORDER_CARD))
+    server.order_card(FOX_1)
+    tick_until(o, lambda: not o.ctx.in_turn)
+    assert fakes.calls.count("home") == 1
+
+
 def test_move_onto_unscanned_clearing_scans_it_and_continues():
     o, fakes, server = make([BEFORE_BATTLE, AFTER_BATTLE])
     tick_until(o, waiting(server, WaitingFor.YOUR_TURN))
@@ -215,7 +335,9 @@ def test_move_onto_unscanned_clearing_scans_it_and_continues():
     server.order_card(FOX_1)
     tick_until(o, waiting(server, WaitingFor.DICE))
     server.dice_rolled((3, 0))
-    tick_until(o, waiting(server, WaitingFor.YOUR_TURN))
+    tick_until(o, removing(server))
+    server.your_turn()
+    tick_until(o, lambda: not o.ctx.in_turn)
 
     c2 = center(o, 2)
     scan = fakes.calls.index("scan [2]")
@@ -227,9 +349,7 @@ def test_move_onto_unscanned_clearing_scans_it_and_continues():
 
 
 def test_clearing_still_unknown_after_scan_waits_for_human():
-    no_positions = BoardObservation(
-        pieces={C(1): {BOT: PieceCounts(warriors=5)}}, positions={}, scores={}, confidence=1.0
-    )
+    no_positions = replace(obs({C(1): {BOT: PieceCounts(warriors=5)}}), positions={})
     o, fakes, server = make([no_positions])
     tick_until(o, waiting(server, WaitingFor.YOUR_TURN))
     server.your_turn()
@@ -244,34 +364,186 @@ def test_clearing_still_unknown_after_scan_waits_for_human():
     assert not any(c.startswith("move") for c in fakes.calls)
 
 
-def test_failed_arm_move_keeps_goal_until_retry_succeeds():
+def test_failed_arm_move_changes_nothing_until_retry_succeeds():
     alone = obs({C(1): {BOT: PieceCounts(warriors=5)}})
     o, fakes, server = make([alone])
+    state = o.ctx.state
+    state.update(pieces=alone.pieces, keep_clearing=None, scores={})
     o.planner.process(alone, [C(1), C(2)])
-    o.ctx.tasks = o.planner.move(Move(C(1), C(2), 2))
+    o.ctx.arm_actions = [o.move_action(Move(C(1), C(2), 2))]
+    tasks = list(o.ctx.arm_actions[0].tasks)
     before = {c: list(points) for c, points in o.planner.bot_positions.items()}
     fakes.moves_to_fail = 1
     with pytest.raises(RuntimeError):
-        o.run_tasks()
+        o.run_arm_actions()
     assert o.planner.bot_positions == before
-    assert o.planner.goals == o.ctx.tasks and len(o.ctx.tasks) == 2
+    assert o.planner.goals == tasks
+    assert state.counts(C(1), BOT).warriors == 5 and state.counts(C(2), BOT).warriors == 0
 
-    tasks = list(o.ctx.tasks)
-    o.run_tasks()
-    assert o.planner.goals == [] and o.ctx.tasks == []
+    o.run_arm_actions()
+    o.run_arm_actions()
+    assert o.planner.goals == [] and o.ctx.arm_actions == []
     assert o.planner.bot_positions[C(1)] == alone.positions[C(1)][BOT][2:]
     assert o.planner.bot_positions[C(2)] == [task.target for task in tasks]
+    assert state.counts(C(1), BOT).warriors == 3 and state.counts(C(2), BOT).warriors == 2
 
 
-def test_aborted_turn_drops_pending_tasks():
+def test_game_end_drops_unfinished_arm_actions():
+    alone = obs({C(1): {BOT: PieceCounts(warriors=5)}})
+    o, fakes, server = make([alone])
+    fakes.moves_to_fail = 100
+    tick_until(o, waiting(server, WaitingFor.YOUR_TURN))
+    server.your_turn()
+    tick_until(o, waiting(server, WaitingFor.ORDER_CARD))
+    server.order_card(FOX_1)
+    tick_until(o, lambda: server.current_state().step.startswith("needs help"))
+    assert o.ctx.arm_actions
+
+    server.end_game()
+    o.run()
+    assert o.ctx.arm_actions == [] and o.planner.goals == []
+    assert o.ctx.state.counts(C(1), BOT).warriors == 5
+
+
+TRACK = [BoardPoint(0, i) for i in range(31)]
+
+
+class Clock:
+    def __init__(self) -> None:
+        self.now = 0.0
+
+    def monotonic(self) -> float:
+        return self.now
+
+    def sleep(self, seconds: float) -> None:
+        self.now += seconds
+
+
+def test_card_given_moves_the_token_after_the_delay_then_scores(monkeypatch):
+    clock = Clock()
+    monkeypatch.setattr("rootbot.app.orchestrator.time", clock)
+    o, fakes, server = make([BEFORE_BATTLE])
+    o.planner.score_track, o.card_given_delay_s = TRACK, 4
+    tick_until(o, waiting(server, WaitingFor.YOUR_TURN))
+    server.card_given()
+    for _ in range(3):
+        o.tree.tick()
+    assert fakes.calls == []
+    assert o.ctx.state.scores.get(BOT, 0) == 0
+    assert server.current_state().message == "card given: the arm moves the score token in 4 s"
+
+    clock.now = 4.0
+    o.tree.tick()
+    assert fakes.calls == [f"move {TRACK[0]} -> {TRACK[1]}"]
+    assert o.ctx.state.scores[BOT] == 1
+    assert o.ctx.cards_given == 0
+
+
+def test_failed_token_move_waits_for_human_and_scores_once():
+    o, fakes, server = make([BEFORE_BATTLE])
+    o.planner.score_track = TRACK
+    fakes.moves_to_fail = o.step_retries + 1
+    tick_until(o, waiting(server, WaitingFor.YOUR_TURN))
+    server.card_given()
+    tick_until(o, lambda: server.current_state().step.startswith("needs help"))
+    assert server.current_state().error is not None
+    assert o.ctx.state.scores.get(BOT, 0) == 0
+
+    server.your_turn()
+    tick_until(o, lambda: not o.ctx.arm_actions)
+    for _ in range(5):
+        o.tree.tick()
+    assert o.ctx.state.scores[BOT] == 1
+    assert fakes.calls.count(f"move {TRACK[0]} -> {TRACK[1]}") == 1
+    assert not o.ctx.turn_requested and not o.ctx.in_turn
+
+
+def test_card_given_without_score_track_scores_at_once():
+    o, fakes, server = make([BEFORE_BATTLE])
+    o.card_given_delay_s = 4
+    tick_until(o, waiting(server, WaitingFor.YOUR_TURN))
+    server.card_given()
+    o.tree.tick()
+    assert o.ctx.state.scores[BOT] == 1
+    assert not any(c.startswith("move") for c in fakes.calls)
+
+
+def test_failed_home_at_turn_end_waits_for_human_without_new_turn():
+    alone = obs({C(1): {BOT: PieceCounts(warriors=5)}})
+    o, fakes, server = make([alone])
+    fakes.homes_to_fail = 100
+    tick_until(o, waiting(server, WaitingFor.YOUR_TURN))
+    server.your_turn()
+    tick_until(o, waiting(server, WaitingFor.ORDER_CARD))
+    server.order_card(FOX_1)
+    tick_until(o, lambda: server.current_state().step == "needs help: FinishTurn")
+    score = o.ctx.state.scores[BOT]
+    for _ in range(5):
+        o.tree.tick()
+
+    status = server.current_state()
+    assert status.waiting_for == WaitingFor.YOUR_TURN
+    assert "arm home failed" in status.error
+    assert o.ctx.in_turn and fakes.calls.count("scan") == 1
+    assert o.ctx.state.scores[BOT] == score
+
+    fakes.homes_to_fail = 0
+    server.your_turn()
+    tick_until(o, lambda: not o.ctx.in_turn)
+    for _ in range(5):
+        o.tree.tick()
+    assert fakes.calls.count("scan") == 1
+    assert o.ctx.state.scores[BOT] == score
+
+
+def test_failed_home_in_abort_turn_is_reported():
     o, fakes, server = make([obs({}, scores={EYRIE: 30})])
-    o.planner.score_track = [BoardPoint(0, i) for i in range(31)]
-    o.ctx.tasks = o.planner.score(0, 1)
+    fakes.homes_to_fail = 1
     tick_until(o, waiting(server, WaitingFor.YOUR_TURN))
     server.your_turn()
     tick_until(o, lambda: o.ctx.game_over)
-    assert o.ctx.tasks == [] and o.planner.goals == []
-    assert not any(c.startswith("move") for c in fakes.calls)
+    o.run()
+    assert not o.ctx.in_turn
+    assert "arm home failed: arm stuck" in server.current_state().error
+
+
+def test_birdsong_reaching_win_points_ends_the_game_at_once():
+    o, fakes, server = make([BEFORE_BATTLE])
+    o.planner.score_track = TRACK
+    o.ctx.state.scores[BOT] = 28
+    tick_until(o, waiting(server, WaitingFor.YOUR_TURN))
+    server.your_turn()
+    tick_until(o, lambda: o.ctx.game_over)
+
+    assert fakes.calls == ["scan", "add", "detect", f"move {TRACK[28]} -> {TRACK[30]}", "home"]
+    assert o.ctx.state.scores[BOT] == 30
+    assert not o.ctx.in_turn and o.ctx.arm_actions == [] and o.planner.goals == []
+    assert server.current_state().message == "bot reached 30 VP: game over"
+
+
+def test_card_given_reaching_win_points_ends_the_game():
+    o, fakes, server = make([BEFORE_BATTLE])
+    o.planner.score_track = TRACK
+    o.ctx.state.scores[BOT] = 29
+    tick_until(o, waiting(server, WaitingFor.YOUR_TURN))
+    server.card_given()
+    tick_until(o, lambda: o.ctx.game_over)
+    o.run()
+
+    assert fakes.calls == [f"move {TRACK[29]} -> {TRACK[30]}"]
+    assert o.ctx.state.scores[BOT] == 30
+    status = server.current_state()
+    assert status.step == "game over"
+    assert status.message == "bot reached 30 VP: game over"
+
+
+@pytest.mark.parametrize(
+    ("dice", "error"),
+    [("automated", "is planned"), ("software", "unknown value 'software'")],
+)
+def test_dice_other_than_manual_stop_at_construction(dice, error):
+    with pytest.raises(FatalError, match=error):
+        make([BEFORE_BATTLE], dice=dice)
 
 
 def test_card_given_scores_when_idle():
@@ -326,3 +598,30 @@ def test_rechecks_share_one_limit():
     fakes.missing = [RecheckRequest([C(5)], "not visible")] * 2
     assert o.observe_board() is BEFORE_BATTLE
     assert fakes.calls.count("add") - 1 + fakes.calls.count("refine") == o.max_rechecks
+
+
+def test_board_not_found_scans_the_whole_board_again():
+    o, fakes, server = make([BoardObservation(), BEFORE_BATTLE])
+    tick_until(o, waiting(server, WaitingFor.YOUR_TURN))
+    server.your_turn()
+    tick_until(o, waiting(server, WaitingFor.ORDER_CARD))
+    assert fakes.calls[:6] == ["scan", "add", "detect", "scan", "add", "detect"]
+    assert o.ctx.state.counts(C(1), BOT).warriors == 5
+
+
+def test_board_never_found_waits_for_human():
+    o, fakes, server = make([BoardObservation()])
+    tick_until(o, waiting(server, WaitingFor.YOUR_TURN))
+    server.your_turn()
+    tick_until(o, lambda: server.current_state().step.startswith("needs help"))
+
+    state = server.current_state()
+    assert state.waiting_for == WaitingFor.YOUR_TURN
+    assert "board not found on any frame" in state.error
+
+
+def test_partial_scan_without_requested_clearings_scans_them_again():
+    o, fakes, server = make([BoardObservation(pieces={C(1): {}}), BEFORE_BATTLE])
+    request = RecheckRequest([C(5)], "needs scan")
+    assert o.observe_board(target=[C(5)], request=request) is BEFORE_BATTLE
+    assert fakes.calls == ["scan [5]", "add", "detect", "scan [5]", "add", "detect"]
