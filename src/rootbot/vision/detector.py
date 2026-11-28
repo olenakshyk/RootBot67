@@ -27,7 +27,6 @@
 from __future__ import annotations
 
 import logging
-import math
 from collections import Counter
 from dataclasses import dataclass, field, replace
 
@@ -227,7 +226,7 @@ class Detector:
         w, h = self.board_detector.board_size_mm
         if not (0 <= point.x <= w and 0 <= point.y <= h):
             return None
-        return min(self.board.clearings.values(), key=lambda c: _dist(point, c.center)).id
+        return min(self.board.clearings.values(), key=lambda c: point.distance_to(c.center)).id
 
     def _merge(self, located: list[_Located]) -> list[_Piece]:
         """Та сама фігурка з різних кадрів (фракція, вид, поруч) — одна."""
@@ -239,7 +238,7 @@ class Detector:
                     for p in pieces
                     if (p.clearing, p.faction, p.kind) == (r.clearing, r.faction, r.kind)
                     and r.frame not in p.frames
-                    and _dist(r.point, p.point()) <= self.merge_mm
+                    and r.point.distance_to(p.point()) <= self.merge_mm
                 ),
                 None,
             )
@@ -300,10 +299,6 @@ class Detector:
                 )
                 counts.setdefault(clearing, []).append(counter)
         return {c for c, per_frame in counts.items() if any(x != per_frame[0] for x in per_frame)}
-
-
-def _dist(a: BoardPoint, b: BoardPoint) -> float:
-    return math.dist((a.x, a.y), (b.x, b.y))
 
 
 def create_detector(cfg: dict, board: Board, model: PieceDetectorModel) -> Detector:
