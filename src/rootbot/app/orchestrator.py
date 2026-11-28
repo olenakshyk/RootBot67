@@ -117,6 +117,7 @@ class Orchestrator:
                 log.debug(f"tree:\n{shown}")
             time.sleep(self.tick_period_s)
         self.tree.root.stop(Status.INVALID)
+        self.drop_tasks()
         self.status(step="game over", waiting_for=None)
         log.info(f"Orchestrator: game over, scores {self._scores()}")
 
@@ -224,10 +225,18 @@ class Orchestrator:
         self.ctx.tasks += self.planner.score(old, scores[BOT])
 
     def run_tasks(self) -> None:
-        """Виконати заплановані переміщення; задача знімається з черги лише після успіху."""
+        """Виконати заплановані переміщення; лише після успіху задача знімається з черги, а
+        MovePlanner оновлює картину дошки (done)."""
         while self.ctx.tasks:
-            self.manipulator.move(self.ctx.tasks[0])
+            task = self.ctx.tasks[0]
+            self.manipulator.move(task)
+            self.planner.done(task)
             self.ctx.tasks.pop(0)
+
+    def drop_tasks(self) -> None:
+        """Забути невиконані переміщення: черга ctx.tasks і цілі MovePlanner разом."""
+        self.ctx.tasks.clear()
+        self.planner.drop_goals()
 
     def card(self) -> OrderCard:
         if self.ctx.card is None:
@@ -481,10 +490,12 @@ class FinishTurn(Step):
 
 
 class AbortTurn(Step):
-    """Хід не вдався без повтору (кінець гри): рука в home, хід завершено."""
+    """Хід не вдався без повтору (кінець гри): рука в home, невиконані переміщення забуто, хід
+    завершено."""
 
     def step(self) -> Status:
         self.o.arm.home()
+        self.o.drop_tasks()
         self.o.ctx.in_turn = self.o.ctx.turn_requested = False
         if not self.o.ctx.game_over:
             log.error(f"bot turn aborted: {self.o.ctx.error}")

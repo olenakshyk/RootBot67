@@ -4,6 +4,9 @@ about: Нова функціональність, дослідження або 
 labels: feature
 ---
 
+<!-- Мітки: трек (game, vision, robot, app, …), P1–P3, needs: robot | camera | board game або no hardware.
+     Див. docs/contributing.md → «Тікети». -->
+
 <!-- 1–3 речення: що зробити й навіщо. Без заголовка. -->
 
 ## Acceptance Criteria

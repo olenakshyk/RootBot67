@@ -13,7 +13,7 @@
 ```mermaid
 flowchart TB
     subgraph opapp [Застосунок оператора]
-        BTN[Хід бота / Карту дано]
+        BTN[Хід бота / Карта наказу / Кубики / Карту дано / Кінець гри]
     end
     subgraph app [app]
         MAIN[main]
@@ -62,9 +62,10 @@ flowchart TB
   рухає. Вимоги: [requirements/orchestrator.md](requirements/orchestrator.md). Код: [`app/orchestrator.py`](../src/rootbot/app/orchestrator.py).
 - **`MovePlanner`** — дії бота → конкретні переміщення: яких котів узяти й куди поставити (вільне місце в колі галявини шукає сам), жетон рахунку.
   Код: [`app/move_planner.py`](../src/rootbot/app/move_planner.py).
-- **`OperatorServer`** — зв'язок із застосунком оператора: приймає сигнали й віддає поточний стан бота. Працює у
-  фоновому потоці тієї самої програми; сигнали — через `queue.Queue`, стан — спільний об'єкт під `threading.Lock`
-  ([ADR 0006](decisions/0006-operator-app.md)). Вимоги й методи: [requirements/operator-server.md](requirements/operator-server.md).
+- **`OperatorServer`** — зв'язок із застосунком оператора: приймає сигнали й віддає поточний стан бота. Приймає лише
+  сигнал, якого бот чекає зараз (`WaitingFor`), і «Кінець гри» будь-коли. Сигнали — через `queue.Queue`, стан —
+  спільний об'єкт під `threading.Lock` ([ADR 0006](decisions/0006-operator-app.md)). Зараз це частина тієї самої
+  програми; HTTP-сервер у фоновому потоці — заплановано. Вимоги й методи: [requirements/operator-server.md](requirements/operator-server.md).
   Код: [`app/operator_ui.py`](../src/rootbot/app/operator_ui.py).
 
 ### game — правила бота: стан дошки + карта наказу → дії
@@ -76,23 +77,23 @@ flowchart TB
 
 ### vision — кадри огляду → стан дошки
 
-- **`Detector`** — головний клас зору: з кадрів огляду знаходить фігурки, приписує їх до галявин, рахує котів у запасі на планшеті бота: каже лише, хто де стоїть. Повертає `BoardObservation` і `RecheckRequest` — що варто переглянути, щоб уточнити його (цикл покращень). Код: [`vision/detector.py`](../src/rootbot/vision/detector.py).
+- **`Detector`** — головний клас зору: з кадрів огляду знаходить фігурки й приписує їх до галявин: каже лише, хто де стоїть. Заплановано: коти в запасі на планшеті бота, маркери рахунку. Повертає `BoardObservation` і `RecheckRequest` — що варто переглянути, щоб уточнити його (цикл покращень). Код: [`vision/detector.py`](../src/rootbot/vision/detector.py).
 - **`PieceDetectorModel`** — модель фігурок за інтерфейсом: кадри → рамки (`PieceBox`). Реалізацію (YOLO тощо) обирає конфіг; поки заглушка. Код: [`vision/piece_detector_model.py`](../src/rootbot/vision/piece_detector_model.py).
 - **`BoardMask`** — частина дошки як растр у мм: що треба побачити в огляді (уся дошка, галявини, інше) і скільки її покривають кадри. Код: [`vision/board_mask.py`](../src/rootbot/vision/board_mask.py).
 - **`board_detector`** — знаходить дошку й планшет бота на кадрі за їхнім малюнком: `BoardHomography` — піксель ↔ мм дошки й яку частину дошки видно ([vision.md](vision.md)). Вимоги до зору: [requirements/detector.md](requirements/detector.md). Код: [`vision/board_detector.py`](../src/rootbot/vision/board_detector.py).
 - **`board_reference`** — еталон дошки й планшета: знімок → вирівняне зображення в мм + характерні точки. Готується один раз скриптом `scripts/make_board_reference.py`. Код: [`vision/board_reference.py`](../src/rootbot/vision/board_reference.py).
-- **`geometry`** — рамка фігурки на кадрі → точка її основи → точка на площині дошки в мм ([calibration.md](calibration.md)). Код: [`vision/geometry.py`](../src/rootbot/vision/geometry.py).
-- **`camera`** — кадри з камери RealSense і її параметри; може читати кадри з диска. Код: [`vision/camera.py`](../src/rootbot/vision/camera.py).
-- **`observation`** — `BoardObservation` — що `vision` повертає в `app`: кількості фігурок по галявинах (`pieces`), де стоїть кожна фігурка по фракціях (`positions`), усі зайняті точки разом із Keep (`occupied`), галявина Keep, впевненість. Код: [`vision/observation.py`](../src/rootbot/vision/observation.py).
+- **`geometry`** (заплановано) — рамка фігурки на кадрі → точка її основи → точка на площині дошки в мм ([calibration.md](calibration.md)). Зараз цей перехід робить `Detector` через `BoardHomography`.
+- **`camera`** — кадри для огляду: `FolderCamera` читає їх з теки на диску (`camera.source: folder`); камера RealSense — заплановано. Код: [`vision/camera.py`](../src/rootbot/vision/camera.py).
+- **`observation`** — `BoardObservation` — що `vision` повертає в `app`: кількості фігурок по галявинах (`pieces`), де стоїть кожна фігурка по фракціях (`positions`), усі зайняті точки разом із Keep (`occupied`), галявина Keep (`keep_clearing`), ПО з доріжки рахунку (`scores`, читання маркерів — заплановано), впевненість (`confidence`). Код: [`vision/observation.py`](../src/rootbot/vision/observation.py).
 
 Детектор фігурок навчається окремо в [`ml/`](ml.md); до програми доходять лише ваги в `models/`.
 
 ### robot — рука: огляд і перенесення фігурок
 
-- **`Manipulator`** — переносить одну фігурку: взяти в одній точці, поставити в іншій (галявина або планшет бота). На вхід `PieceMoveTask`. Перевіряє, що точки в робочій зоні, до руху. Код: [`robot/manipulator.py`](../src/rootbot/robot/manipulator.py).
-- **`Scanner`** — огляд: рука стає в оглядові пози й знімає кадри на зупинках (спершу майже згори; на `RecheckRequest` детектора сам вирішує, як дознімати); кадр зблизька перед захватом. Код: [`robot/scan.py`](../src/rootbot/robot/scan.py).
-- **`arm`** — рука: `XArm` (справжня, через xArm SDK) і `MockArm` (без робота). Решта коду знає лише `Protocol` `Arm`, тож вони взаємозамінні. Код: [`robot/arm.py`](../src/rootbot/robot/arm.py).
-- **`hand_eye`** — де камера на руці: поза камери для будь-якої пози руки ([calibration.md](calibration.md)). Код: [`robot/hand_eye.py`](../src/rootbot/robot/hand_eye.py).
+- **`Manipulator`** — переносить одну фігурку: взяти в одній точці, поставити в іншій (галявина або планшет бота). На вхід `PieceMoveTask`. Поки заглушка: пише задачу в лог. Заплановано: рух руки й перевірка, що точки в робочій зоні, до руху. Код: [`robot/manipulator.py`](../src/rootbot/robot/manipulator.py).
+- **`Scanner`** — огляд: рука стає в оглядові пози й знімає кадри на зупинках (спершу майже згори; на `RecheckRequest` детектора сам вирішує, як дознімати). Поки поз немає: один кадр з поточного місця на кожен огляд. Заплановано: кадр зблизька перед захватом. Код: [`robot/scan.py`](../src/rootbot/robot/scan.py).
+- **`arm`** — рука: `MockArm` (без робота, рухи пишуться в лог) і `XArm` (справжня, через xArm SDK; заплановано). Решта коду знає лише `Protocol` `Arm`, тож вони взаємозамінні. Код: [`robot/arm.py`](../src/rootbot/robot/arm.py).
+- **`hand_eye`** (заплановано) — де камера на руці: поза камери для будь-якої пози руки ([calibration.md](calibration.md)).
 - **`transforms`** — перетворення точок і поз між системами координат: камера, фланець, робот, дошка. Код: [`robot/transforms.py`](../src/rootbot/robot/transforms.py).
 
 ### common — спільні типи
@@ -118,7 +119,7 @@ sequenceDiagram
     Vis-->>App: BoardObservation
     App->>Game: Світанок (стан)
     Game-->>App: очки
-    Op->>App: «Карту дано»
+    Op->>App: карта наказу (order_card)
     loop День крок за кроком: бій → рух → набір
         App->>Game: наступний крок (актуальний стан)
         Game-->>App: дія

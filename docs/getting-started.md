@@ -14,23 +14,39 @@ python -m venv .venv
 # Linux / macOS:
 source .venv/bin/activate
 
-# Тільки ігрова логіка й тести:
-pip install -e ".[dev]"
+# Код і тести, як у CI (vision — OpenCV, потрібен тестам):
+pip install -e ".[dev,vision]"
 
 # Усе разом (камера + робот):
 pip install -e ".[dev,vision,robot]"
 
-# Пайплайн датасету й тренування детектора (потрібен NVIDIA GPU), див. [ml.md](ml.md):
-pip install -e ".[train]"
+# Модель фігурок YOLO (vision.piece_model.type: yolo, тягне torch):
+pip install -e ".[ml-model]"
 
 pytest
 ```
 
-Запуск **без робота і без камери** (робот замінений на MockArm, кадри читаються з теки),
-коли з'явиться `app/main.py`:
+Запуск **без робота і без камери**: рука — `MockArm` (рухи лише пишуться в лог), кадри читаються з теки.
+У `config/local.yaml`:
+
+```yaml
+robot:
+  mock: true
+camera:
+  source: folder
+  folder: data/samples   # свої кадри дошки (.jpg / .png)
+```
+
+Ще потрібні дві речі, яких у git немає:
+
+- кадри дошки в `data/samples` (тека з `camera.folder`);
+- еталон дошки `data/reference/board_autumn.png` разом з `board_autumn.yaml` поруч (`board.reference_image`).
+  Його робить один раз скрипт `scripts/make_board_reference.py`
+  ([vision.md → V1](vision.md#v1-дошка-й-планшет-бота)):
 
 ```bash
-python -m rootbot.app.main --mock-robot --mock-camera data/samples
+python scripts/make_board_reference.py --image <фото дошки згори> --name board_autumn
+python -m rootbot.app.main
 ```
 
 > ⚠️ Перед роботою зі **справжньою** рукою прочитайте [hardware-and-safety.md](hardware-and-safety.md).
@@ -45,14 +61,12 @@ python -m rootbot.app.main --mock-robot --mock-camera data/samples
 │   ├── vision/             # Камера, детекція дошки (без маркерів), фігурок, карт
 │   ├── robot/              # Обгортка над xArm SDK, перетворення координат, перенесення фігурок, MockArm
 │   └── app/                # Оркестратор ходу, інтерфейс оператора, точка входу
-├── ml/                     # Пайплайн датасету й тренування детектора, поза пакетом робота
 ├── config/                 # YAML-конфіги: IP робота, камера, калібрування, модель мапи
 ├── scripts/                # Утиліти: калібрування, збір датасету, ручне керування рукою
 ├── tests/                  # pytest-тести (структура повторює src/rootbot), сценарії бота в tests/game/scenarios/
 ├── hardware/               # CAD пальців захвату, кріплення камери, схема розміщення
 ├── docs/                   # Документація проєкту
-├── data/                   # Скани, датасети, проміжні результати (не в git), див. [ml.md](ml.md)
-├── runs/                   # Запуски тренувань (не в git)
+├── data/                   # Кадри, еталони дошки, датасети (не в git)
 └── models/                 # Натреновані ваги моделей (не в git)
 ```
 
