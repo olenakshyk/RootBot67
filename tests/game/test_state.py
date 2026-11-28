@@ -4,7 +4,7 @@ import pytest
 
 from rootbot.common.types import ClearingId, Faction, PieceCounts
 from rootbot.game.board import load_board
-from rootbot.game.state import BOT, GameState, GameStateError
+from rootbot.game.state import BOT, GameState, GameStateError, copy_pieces
 
 AUTUMN = Path(__file__).resolve().parents[2] / "config" / "maps" / "autumn.yaml"
 EYRIE, ALLIANCE, VAGABOND = Faction.EYRIE, Faction.ALLIANCE, Faction.VAGABOND
@@ -213,8 +213,52 @@ def test_update_keeps_keep_if_not_seen(board):
     assert s.keep_clearing == C
 
 
+def test_update_keeps_keep_if_its_clearing_outside_partial_update(board):
+    s = GameState(board, keep_clearing=C)
+    s.update(pieces={C: {}}, keep_clearing=None, scores={}, clearings=[ClearingId(1)])
+    assert s.keep_clearing == C
+
+
+@pytest.mark.parametrize("seen_keep", [None, ClearingId(1)])
+def test_update_takes_keep_from_camera_if_its_clearing_seen(board, seen_keep):
+    s = GameState(board, keep_clearing=C)
+    s.update(pieces={C: {}, ClearingId(1): {}}, keep_clearing=seen_keep, scores={})
+    assert s.keep_clearing == seen_keep
+
+
+@pytest.mark.parametrize("pieces", [{C: {}, ClearingId(0): {}}, {C: {EYRIE: pc(w=-1)}}])
+def test_invalid_update_leaves_state_unchanged(board, pieces):
+    s = GameState(board, pieces={C: {BOT: pc(w=2)}}, keep_clearing=C, scores={BOT: 7, EYRIE: 3})
+    with pytest.raises(GameStateError, match="invalid game state"):
+        s.update(pieces=pieces, keep_clearing=None, scores={EYRIE: 5})
+    assert (s.pieces, s.keep_clearing, s.scores) == ({C: {BOT: pc(w=2)}}, C, {BOT: 7, EYRIE: 3})
+
+
+def test_add_warriors_more_than_present_raises(board):
+    s = state(board, {BOT: pc(w=2)})
+    with pytest.raises(GameStateError, match="has 2 marquise_bot warriors, cannot change by -3"):
+        s.add_warriors(C, -3)
+    assert s.pieces == {C: {BOT: pc(w=2)}}
+
+
+def test_add_warriors_unknown_clearing_raises(board):
+    s = state(board, {BOT: pc(w=2)})
+    with pytest.raises(GameStateError, match="unknown clearing 0"):
+        s.add_warriors(ClearingId(0), 1)
+    assert s.pieces == {C: {BOT: pc(w=2)}}
+
+
 def test_partial_update_touches_only_given_clearings(board):
     other = ClearingId(1)
     s = GameState(board, pieces={C: {BOT: pc(w=2)}, other: {BOT: pc(w=4)}})
     s.update(pieces={C: {}}, keep_clearing=None, scores={}, clearings=[C])
     assert s.counts(C, BOT).warriors == 0 and s.counts(other, BOT).warriors == 4
+
+
+def test_copy_pieces_changes_leave_original_untouched():
+    original = {C: {BOT: pc(w=2)}}
+    copied = copy_pieces(original)
+    copied[C][BOT].warriors = 5
+    copied[C][EYRIE] = pc(w=1)
+    copied[ClearingId(1)] = {}
+    assert original == {C: {BOT: pc(w=2)}}
