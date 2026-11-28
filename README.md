@@ -1,7 +1,8 @@
 # RootBot — xArm 7 грає в Root
 
 Університетський проєкт: роборука **UFACTORY xArm 7** грає з людьми в настільну гру
-[**Root**](https://ledergames.com/products/root-a-game-of-woodland-might-and-right) за бота **Механічна Маркіза**.
+[**Root**](https://ledergames.com/products/root-a-game-of-woodland-might-and-right) за бота **Механічна Маркіза**
+(Mechanical Marquise) з доповнення **Riverfolk**.
 Камера на руці бачить дошку, бот вирішує хід за своїми правилами, рука переставляє його воїнів.
 
 > **Дедлайн:** 14.12.2026. План: [docs/roadmap.md](docs/roadmap.md).
@@ -24,3 +25,9 @@
 | [Автономність](docs/autonomy.md) | що зараз робить людина, а згодом має робити робот |
 | [Вимоги](docs/requirements/) | що мають робити компоненти: FR / NFR |
 | [Рішення (ADR)](docs/decisions/) | чому зроблено саме так |
+
+## Подяки
+
+- **Root** і доповнення **Riverfolk**: © [Leder Games](https://ledergames.com/). Проєкт некомерційний, навчальний.
+  Ми не викладаємо в репозиторій правила гри чи скани компонентів, лише власний опис того, що реалізуємо.
+- [xArm Python SDK](https://github.com/xArm-Developer/xArm-Python-SDK) від UFACTORY.
