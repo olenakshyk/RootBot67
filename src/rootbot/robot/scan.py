@@ -50,7 +50,8 @@ class Scanner:
             log.info("scan: board")
             frames = [self.camera.capture() for _ in self.scan_poses or [[]]]
         else:
-            log.info(f"scan: clearings {request.clearings} ({request.reason})")
+            reasons = ", ".join(r.value for r in request.reasons)
+            log.info(f"scan: clearings {request.clearings} ({reasons})")
             frames = [self.camera.capture() for _ in request.clearings]
         self._scans += 1
         if self.frames_dir is not None:
@@ -66,7 +67,7 @@ class Scanner:
             path = self.frames_dir / f"{name}_frame_{i}.jpg"
             cv2.imwrite(str(path), frame, [cv2.IMWRITE_JPEG_QUALITY, 95])
         meta = {
-            "reason": "board" if request is None else request.reason,
+            "reasons": ["board"] if request is None else [r.value for r in request.reasons],
             "clearings": [] if request is None else [int(c) for c in request.clearings],
             "frames": len(frames),
             "time": f"{datetime.now():%Y-%m-%d %H:%M:%S}",
