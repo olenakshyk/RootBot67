@@ -124,7 +124,7 @@ sequenceDiagram
         App->>Game: наступний крок (актуальний стан)
         Game-->>App: дія
         opt Бій
-            App->>Op: кинути кубики, скільки випало
+            App->>Op: кинути кубики (кидає застосунок, Op лише натискає)
             App->>Game: resolve_battle
             Game-->>App: BattleResult
         end

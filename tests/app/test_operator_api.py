@@ -7,16 +7,19 @@ from fastapi.testclient import TestClient
 
 from rootbot.app.operator_api import create_app, start_operator_api
 from rootbot.app.operator_ui import (
+    BattleInfo,
     CardGiven,
     DiceRolled,
     EndGame,
     KeepRemoved,
+    NewGame,
+    Notice,
     OperatorServer,
     OrderCardRevealed,
     YourTurn,
 )
 from rootbot.common.errors import TemporaryError
-from rootbot.common.types import Faction, OrderCard, Suit
+from rootbot.common.types import ClearingId, Faction, OrderCard, Suit
 
 
 @pytest.fixture
@@ -37,9 +40,9 @@ def signals(server):
 
 
 def test_simple_signals_in_order(client, server):
-    for path in ("your-turn", "card-given", "keep-removed", "end-game"):
+    for path in ("your-turn", "card-given", "keep-removed", "end-game", "new-game"):
         assert client.post(f"/signals/{path}").status_code == 202
-    assert signals(server) == [YourTurn(), CardGiven(), KeepRemoved(), EndGame()]
+    assert signals(server) == [YourTurn(), CardGiven(), KeepRemoved(), EndGame(), NewGame()]
 
 
 def test_order_card(client, server):
@@ -102,6 +105,11 @@ def test_state(client, server):
         "scores": {},
         "message": "",
         "error": None,
+        "battle": None,
+        "keep_destroyed": False,
+        "winner": None,
+        "notice": None,
+        "cards_left": None,
     }
     server.set_status(
         step="idle",
@@ -115,7 +123,51 @@ def test_state(client, server):
         "scores": {"marquise_bot": 7, "eyrie": 3},
         "message": "remove 2 warriors",
         "error": None,
+        "battle": None,
+        "keep_destroyed": False,
+        "winner": None,
+        "notice": None,
+        "cards_left": None,
     }
+
+
+def test_state_notice(client, server):
+    notice = Notice("birdsong", 4, (ClearingId(1), ClearingId(5)), 4.0)
+    server.set_status(step="birdsong: scored", notice=notice)
+    assert client.get("/state").json()["notice"] == {
+        "kind": "birdsong",
+        "points": 4,
+        "clearings": [1, 5],
+        "seconds": 4.0,
+    }
+
+
+def test_state_winner(client, server):
+    server.set_status(step="game over", waiting_for="new_game", winner=Faction.MARQUISE_BOT)
+    state = client.get("/state").json()
+    assert (state["waiting_for"], state["winner"]) == ("new_game", "marquise_bot")
+
+
+def test_state_battle(client, server):
+    server.set_status(waiting_for="dice", battle=BattleInfo(ClearingId(3), Faction.VAGABOND))
+    state = client.get("/state").json()
+    assert state["waiting_for"] == "dice"
+    assert state["battle"] == {"clearing": 3, "defender": "vagabond"}
+
+
+def test_serves_operator_app(client):
+    r = client.get("/")
+    assert r.status_code == 200
+    assert 'src="app.js"' in r.text
+    modules = ("app", "api", "ui", "screens", "order-card", "dice", "forest", "sky")
+    vendor = ("preact.js", "preact-hooks.js", "htm.js", "fonts/grenze-gotisch-800.woff2")
+    paths = [f"/{m}.js" for m in modules] + ["/style.css"] + [f"/vendor/{v}" for v in vendor]
+    for path in paths:
+        assert client.get(path).status_code == 200, path
+
+
+def test_api_paths_win_over_static(client):
+    assert client.get("/state").json()["step"] == "starting"
 
 
 def test_cors(server):

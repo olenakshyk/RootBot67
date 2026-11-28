@@ -73,7 +73,7 @@ def test_birdsong_enemy_tokens_do_not_break_rule(board):
 def test_birdsong_sums_clearings_in_priority_order(board):
     first, second = (c.id for c in board.by_priority()[:2])
     result = score(board, {second: {BOT: pc(w=5)}, first: {BOT: pc(w=3)}})
-    assert result == Score(4, f"birdsong: scoring clearings {first}, {second}")
+    assert result == Score(4, f"birdsong: scoring clearings {first}, {second}", (first, second))
 
 
 def test_birdsong_uses_given_rules(board):

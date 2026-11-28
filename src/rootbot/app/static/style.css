@@ -1,0 +1,1426 @@
+/* Застосунок оператора в стилі Root (#26): осіннє небо, сосни, рваний папір, плитки мастей.
+   Мудборд і прототип: robot_project/prototypes/order-card.html (поза репозиторієм). */
+
+@font-face {
+  font-family: "Grenze Gotisch";
+  font-weight: 800;
+  font-display: swap;
+  src: url("vendor/fonts/grenze-gotisch-800.woff2") format("woff2");
+}
+@font-face {
+  font-family: "Kurale";
+  font-weight: 400;
+  font-display: swap;
+  src: url("vendor/fonts/kurale-400.woff2") format("woff2");
+}
+@font-face {
+  font-family: "Alegreya Sans";
+  font-weight: 400;
+  font-display: swap;
+  src: url("vendor/fonts/alegreya-sans-400.woff2") format("woff2");
+}
+@font-face {
+  font-family: "Alegreya Sans";
+  font-weight: 500;
+  font-display: swap;
+  src: url("vendor/fonts/alegreya-sans-500.woff2") format("woff2");
+}
+@font-face {
+  font-family: "Alegreya Sans";
+  font-weight: 700;
+  font-display: swap;
+  src: url("vendor/fonts/alegreya-sans-700.woff2") format("woff2");
+}
+
+/* Кольори неба й лісу зареєстровані як <color>, щоб градієнт плавно перетікав між порами доби
+   (звичайні змінні CSS не анімуються). Кут дуги сонця й місяця — так само. */
+@property --sky-top {
+  syntax: "<color>";
+  inherits: true;
+  initial-value: #f2a765;
+}
+@property --sky-mid {
+  syntax: "<color>";
+  inherits: true;
+  initial-value: #d86c48;
+}
+@property --sky-low {
+  syntax: "<color>";
+  inherits: true;
+  initial-value: #74394f;
+}
+@property --pine-far {
+  syntax: "<color>";
+  inherits: true;
+  initial-value: #8f4b4c;
+}
+@property --pine-mid {
+  syntax: "<color>";
+  inherits: true;
+  initial-value: #5a3843;
+}
+@property --pine-near {
+  syntax: "<color>";
+  inherits: true;
+  initial-value: #2f3329;
+}
+@property --theta {
+  syntax: "<angle>";
+  inherits: true;
+  initial-value: 180deg;
+}
+
+:root {
+  /* чорнило й папір */
+  --ink: #2b1f1b;
+  --ink-soft: #5b4a3f;
+  --parchment: #ecdfbd;
+  --parchment-light: #f6ecd2;
+  --cream: #fff6e6;
+
+  /* небо й ліс: вечір (мапа «Осінь»); інші пори доби — нижче, [data-time] */
+  --sky-top: #f2a765;
+  --sky-mid: #d86c48;
+  --sky-low: #74394f;
+  --pine-far: #8f4b4c;
+  --pine-mid: #5a3843;
+  --pine-near: #2f3329;
+  --sky-change: 2.6s; /* скільки триває перехід між порами доби */
+  --ribbon: #3f6a47;
+  --ribbon-dark: #2c4d33;
+
+  /* фракції */
+  --marquise: #e07b2c;
+  --eyrie: #3f63a6;
+  --alliance: #3f8f48;
+  --vagabond: #7d7468;
+  --riverfolk: #3f8f8c;
+  --lizards: #c9b24a;
+
+  /* масті карт */
+  --fox: #c8432b;
+  --rabbit: #e3b03a;
+  --mouse: #dc7a31;
+  --bird: #5c9fb6;
+  --any: #a89a84;
+  --steel: #8b979b;
+
+  --laurel: #8a9a3c;
+  --gold: #c9a24a;
+  --danger: #6e3240;
+  --muted: #6f6377;
+  --error-ink: #8a2f1c;
+
+  --versal: "Grenze Gotisch", "Kurale", Georgia, serif;
+  --display: "Kurale", "Palatino Linotype", Georgia, serif;
+  --ui: "Alegreya Sans", "Segoe UI", system-ui, sans-serif;
+}
+
+* {
+  box-sizing: border-box;
+}
+html {
+  -webkit-text-size-adjust: 100%;
+}
+body {
+  margin: 0;
+  min-height: 100vh;
+  color: var(--ink);
+  font: 400 17px/1.45 var(--ui);
+  background: linear-gradient(180deg, var(--sky-top) 0%, var(--sky-mid) 38%, var(--sky-low) 78%) fixed;
+  background-color: var(--sky-mid);
+}
+button {
+  font: inherit;
+  color: inherit;
+}
+
+/* ---------- Пори доби (sky.js ставить data-time на <html>) ----------
+   Світанок — ранок, День — день, Вечір — вечір, хід людей — ніч. */
+:root {
+  transition:
+    --sky-top var(--sky-change) ease-in-out,
+    --sky-mid var(--sky-change) ease-in-out,
+    --sky-low var(--sky-change) ease-in-out,
+    --pine-far var(--sky-change) ease-in-out,
+    --pine-mid var(--sky-change) ease-in-out,
+    --pine-near var(--sky-change) ease-in-out;
+}
+:root[data-time="morning"] {
+  --sky-top: #e9a98a;
+  --sky-mid: #e9b6a0;
+  --sky-low: #a9849a;
+  --pine-far: #9a7f8e;
+  --pine-mid: #6c5866;
+  --pine-near: #33352f;
+}
+:root[data-time="day"] {
+  --sky-top: #6fa9cf;
+  --sky-mid: #a6cfe0;
+  --sky-low: #d9d3b4;
+  --pine-far: #7f9a8a;
+  --pine-mid: #4f6a58;
+  --pine-near: #2c3a2c;
+}
+:root[data-time="evening"] {
+  --sky-top: #f2a765;
+  --sky-mid: #d86c48;
+  --sky-low: #74394f;
+  --pine-far: #8f4b4c;
+  --pine-mid: #5a3843;
+  --pine-near: #2f3329;
+}
+:root[data-time="night"] {
+  --sky-top: #141a33;
+  --sky-mid: #27305a;
+  --sky-low: #4a3b62;
+  --pine-far: #3d3a5a;
+  --pine-mid: #29273d;
+  --pine-near: #14161b;
+}
+
+/* зорі: лише вночі */
+.stars {
+  position: fixed;
+  inset: 0 0 35% 0;
+  z-index: 0;
+  pointer-events: none;
+  opacity: 0;
+  transition: opacity var(--sky-change) ease-in-out;
+  background-image:
+    radial-gradient(1.6px 1.6px at 8% 14%, #fff8e0 60%, transparent),
+    radial-gradient(1.2px 1.2px at 17% 38%, #fff8e0 60%, transparent),
+    radial-gradient(2px 2px at 26% 9%, #fff8e0 60%, transparent),
+    radial-gradient(1.2px 1.2px at 34% 27%, #fff8e0 60%, transparent),
+    radial-gradient(1.6px 1.6px at 43% 6%, #fff8e0 60%, transparent),
+    radial-gradient(1.2px 1.2px at 51% 33%, #fff8e0 60%, transparent),
+    radial-gradient(2px 2px at 59% 16%, #fff8e0 60%, transparent),
+    radial-gradient(1.2px 1.2px at 66% 41%, #fff8e0 60%, transparent),
+    radial-gradient(1.6px 1.6px at 74% 8%, #fff8e0 60%, transparent),
+    radial-gradient(1.2px 1.2px at 81% 29%, #fff8e0 60%, transparent),
+    radial-gradient(2px 2px at 89% 13%, #fff8e0 60%, transparent),
+    radial-gradient(1.2px 1.2px at 95% 36%, #fff8e0 60%, transparent),
+    radial-gradient(1.2px 1.2px at 4% 52%, #fff8e0 60%, transparent),
+    radial-gradient(1.6px 1.6px at 21% 61%, #fff8e0 60%, transparent),
+    radial-gradient(1.2px 1.2px at 39% 55%, #fff8e0 60%, transparent),
+    radial-gradient(1.6px 1.6px at 62% 58%, #fff8e0 60%, transparent),
+    radial-gradient(1.2px 1.2px at 78% 63%, #fff8e0 60%, transparent),
+    radial-gradient(1.6px 1.6px at 93% 54%, #fff8e0 60%, transparent);
+}
+:root[data-time="night"] .stars {
+  opacity: 0.85;
+}
+
+/* Сонце й місяць на одній дузі (еліпс над горизонтом), місяць навпроти сонця.
+   --theta: 0 — сонце в зеніті, ±65° — схід і захід, 180° — сонце під землею, місяць угорі.
+   sky.js лише змінює --theta, а рух по дузі робить перехід зареєстрованої змінної. */
+.celestial {
+  --horizon: clamp(150px, 26vh, 230px); /* від низу екрана: верх лісу */
+  --arc-x: min(46vw, 640px);
+  --arc-y: calc(100vh - var(--horizon) - 58px); /* у зеніті — над табло, між написом і зв'язком */
+  position: fixed;
+  left: 50%;
+  bottom: var(--horizon);
+  width: 0;
+  height: 0;
+  z-index: 0;
+  pointer-events: none;
+  transition: --theta var(--sky-change) cubic-bezier(0.45, 0, 0.3, 1);
+}
+.celestial.instant {
+  transition: none;
+}
+.sun,
+.moon {
+  position: absolute;
+  left: 0;
+  top: 0;
+  translate: -50% -50%;
+}
+.sun {
+  --a: var(--theta);
+  width: 92px;
+  height: 92px;
+  transform: translate(calc(sin(var(--a)) * var(--arc-x)), calc(cos(var(--a)) * var(--arc-y) * -1));
+}
+.moon {
+  --a: calc(var(--theta) + 180deg);
+  width: 74px;
+  height: 74px;
+  transform: translate(calc(sin(var(--a)) * var(--arc-x)), calc(cos(var(--a)) * var(--arc-y) * -1));
+}
+.sun svg,
+.moon svg {
+  width: 100%;
+  height: 100%;
+  overflow: visible;
+}
+
+/* ---------- Ліс на тлі (малює forest.js) ---------- */
+.forest {
+  position: fixed;
+  inset: auto 0 0 0;
+  height: clamp(220px, 42vh, 320px);
+  pointer-events: none;
+  z-index: 0;
+}
+.forest svg {
+  position: absolute;
+  bottom: 0;
+  width: 100%;
+  height: 100%;
+}
+
+/* ---------- Каркас ---------- */
+.app {
+  position: relative;
+  z-index: 1;
+  max-width: 980px;
+  margin: 0 auto;
+  padding: 12px 16px 120px;
+  display: grid;
+  gap: 18px;
+}
+.side {
+  display: contents;
+}
+.others {
+  order: 10;
+}
+
+/* Рваний папір: фон у ::before, щоб текст лишався чітким */
+.torn {
+  position: relative;
+  isolation: isolate;
+}
+.torn::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  z-index: -1;
+  background: var(--paper, var(--parchment));
+  border: 2px solid var(--ink);
+  filter: url(#torn);
+}
+
+/* ---------- Верх: напис і зв'язок ---------- */
+.topbar {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  color: var(--cream);
+  font-size: 0.95rem;
+}
+.link-state {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 2px 12px 2px 8px;
+  border-radius: 999px;
+  background: rgba(43, 31, 27, 0.38); /* читається на будь-якому небі */
+}
+.lantern {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  background: #ffd86b;
+  box-shadow:
+    0 0 0 2px var(--ink),
+    0 0 10px 2px #ffd86b;
+}
+.link-state.off .lantern {
+  background: #8a8178;
+  box-shadow: 0 0 0 2px var(--ink);
+}
+
+/* Напис RootBot: плитка на літеру, як на коробці. ROOT у мастях, BOT у сталі. */
+.wordmark {
+  --paper: var(--parchment);
+  --tile-w: 38px;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  margin: 0;
+  padding: 8px 12px;
+}
+.tile {
+  position: relative;
+  width: var(--tile-w);
+  height: calc(var(--tile-w) * 1.25);
+  display: grid;
+  place-items: center;
+  background: var(--c);
+  border: 2px solid var(--ink);
+  border-radius: 3px;
+  overflow: hidden;
+}
+.tile::after {
+  content: "";
+  position: absolute;
+  inset: 2px;
+  border: 1px solid rgba(246, 236, 210, 0.55);
+  border-radius: 1px;
+}
+.tile-art {
+  position: absolute;
+  left: 6%;
+  top: 10%;
+  width: 88%;
+  height: 88%;
+  color: color-mix(in srgb, var(--c) 35%, var(--cream));
+}
+.glyph {
+  position: relative;
+  z-index: 1;
+  font: 800 calc(var(--tile-w) * 1.08) / 1 var(--versal);
+  color: var(--ink);
+  -webkit-text-stroke: 4px var(--parchment-light);
+  paint-order: stroke fill;
+  transform: translateY(4%) scaleX(1.22); /* широкі круглі літери, як на коробці */
+}
+.tile.steel {
+  --c: var(--steel);
+}
+.word-gap {
+  flex: none;
+  width: 8px;
+  height: 8px;
+  margin: 0 2px;
+  background: var(--ink);
+  transform: rotate(45deg);
+}
+
+/* ---------- Табло очок ---------- */
+/* Табло вгорі: короткі смужки однакової довжини, переносяться по дві на телефоні */
+.scores {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 10px;
+}
+.score {
+  display: flex;
+  align-items: center;
+}
+.medal {
+  position: relative;
+  z-index: 2;
+  width: 50px;
+  height: 50px;
+  display: grid;
+  place-items: center;
+  font: 1.35rem/1 var(--display);
+  font-variant-numeric: lining-nums;
+}
+.medal svg {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  overflow: visible;
+}
+.medal span {
+  position: relative;
+}
+.score .bar {
+  --paper: var(--faction);
+  width: 128px;
+  margin-left: -14px;
+  padding: 7px 8px 7px 20px;
+  color: #fff;
+  font: 1rem/1.15 var(--display);
+  text-shadow: 0 1px 0 rgba(43, 31, 27, 0.55);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.score.is-bot .medal {
+  transform: scale(1.08);
+}
+
+/* ---------- Банер кроку ---------- */
+.banner {
+  --paper: var(--ribbon);
+  padding: 14px 18px 16px;
+  color: #fbf3df;
+  text-align: center;
+}
+.banner h2 {
+  margin: 0;
+  font: 400 2rem/1.1 var(--display);
+  text-shadow: 0 2px 0 var(--ribbon-dark);
+}
+.banner .detail {
+  margin: 6px 0 0;
+  font-size: 1rem;
+  color: rgba(251, 243, 223, 0.88);
+}
+.banner.alarm {
+  --paper: var(--danger);
+}
+.banner.alarm h2 {
+  text-shadow: 0 2px 0 #4a1f2a;
+}
+/* переможець: темна стрічка з золотим текстом і лавровими гілками, як «… Wins!» у грі */
+.banner.win {
+  --paper: #3b302b;
+  padding: 18px 12px;
+}
+.banner.win h2 {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  color: #f3d88b;
+  text-shadow: 0 2px 0 #1e1714;
+}
+.sprig {
+  flex: none;
+  width: 38px;
+  height: 38px;
+}
+.sprig.flip {
+  transform: scaleX(-1);
+}
+.again-title {
+  margin-top: 26px;
+}
+.phase {
+  display: flex;
+  justify-content: center;
+  gap: 6px;
+  margin: 8px 0 0;
+  padding: 0;
+  list-style: none;
+  font-size: 0.92rem;
+}
+.phase li {
+  padding: 1px 10px;
+  border-radius: 999px;
+  color: rgba(251, 243, 223, 0.62);
+}
+.phase li[aria-current="step"] {
+  color: var(--ink);
+  background: var(--parchment);
+  font-weight: 700;
+}
+
+/* Що бот просить, і що мають зробити люди */
+.bot-says {
+  --paper: var(--parchment-light);
+  margin: 0;
+  padding: 12px 16px;
+  font-size: 1.02rem;
+}
+.bot-says b {
+  font-weight: 700;
+}
+.todo {
+  --paper: #fff4d6;
+  display: grid;
+  grid-template-columns: 28px 1fr;
+  gap: 10px;
+  align-items: start;
+  margin: 0;
+  padding: 12px 16px;
+}
+.todo svg {
+  width: 28px;
+  height: 28px;
+  color: var(--ink);
+}
+.todo h3 {
+  margin: 0;
+  font: 1.05rem/1.25 var(--display);
+}
+.todo p {
+  margin: 2px 0 0;
+}
+.offline {
+  --paper: var(--danger);
+  margin: 0;
+  padding: 10px 16px;
+  color: var(--cream);
+}
+
+/* ---------- Аркуш (головна частина екрана) ---------- */
+.sheet {
+  --paper: var(--parchment);
+  padding: 22px 18px 24px;
+}
+.sheet::after {
+  content: "";
+  position: absolute;
+  inset: 6px;
+  z-index: -1;
+  pointer-events: none;
+  background:
+    radial-gradient(ellipse at 18% 12%, rgba(199, 176, 122, 0.45), transparent 42%),
+    radial-gradient(ellipse at 88% 78%, rgba(199, 176, 122, 0.4), transparent 38%),
+    radial-gradient(ellipse at 60% 40%, rgba(255, 250, 235, 0.35), transparent 50%);
+}
+.sheet h3 {
+  margin: 0 0 6px;
+  font: 1.55rem/1.2 var(--display);
+}
+.sheet p {
+  margin: 0 0 14px;
+}
+.sheet .lead {
+  max-width: 40ch;
+}
+.center {
+  text-align: center;
+}
+.center .lead {
+  margin-left: auto;
+  margin-right: auto;
+}
+
+fieldset {
+  border: 0;
+  margin: 0;
+  padding: 0;
+  min-width: 0;
+}
+legend {
+  padding: 0;
+  margin-bottom: 10px;
+  font: 1.3rem/1.2 var(--display);
+}
+.hint {
+  margin: -6px 0 12px;
+  color: var(--ink-soft);
+  font-size: 0.95rem;
+}
+
+/* ---------- Карта наказу ---------- */
+.sheet-grid {
+  display: grid;
+  gap: 22px 16px;
+  grid-template-columns: 108px 1fr;
+  grid-template-areas:
+    "suit suit"
+    "cost cost"
+    "card forecast";
+  align-items: start;
+}
+.card-stage {
+  grid-area: card;
+  display: grid;
+  justify-items: center;
+  perspective: 900px;
+}
+.suit-field {
+  grid-area: suit;
+}
+.cost-field {
+  grid-area: cost;
+}
+.forecast {
+  grid-area: forecast;
+  align-self: stretch;
+  margin: 0;
+  padding: 12px 14px;
+  border-left: 4px solid var(--marquise);
+  background: rgba(255, 250, 235, 0.55);
+  font-size: 0.98rem;
+}
+.forecast p {
+  margin: 0;
+}
+.forecast p + p {
+  margin-top: 4px;
+}
+.forecast .warn {
+  color: var(--error-ink);
+}
+
+.suits {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 10px;
+  max-width: 440px;
+}
+.suit {
+  appearance: none;
+  border: 0;
+  background: none;
+  padding: 0;
+  font: 500 0.95rem/1.2 var(--ui);
+  display: grid;
+  justify-items: center;
+  gap: 6px;
+  cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
+}
+.token {
+  width: 64px;
+  height: 64px;
+  border-radius: 50%;
+  display: grid;
+  place-items: center;
+  background: var(--c);
+  border: 2.5px solid var(--ink);
+  box-shadow:
+    inset 0 -5px 0 rgba(43, 31, 27, 0.22),
+    0 3px 0 var(--ink);
+  transition:
+    transform 160ms ease,
+    box-shadow 160ms ease;
+}
+.token svg {
+  width: 60%;
+  height: 60%;
+}
+.suit[aria-checked="true"] .token {
+  transform: translateY(-4px);
+  box-shadow:
+    inset 0 -5px 0 rgba(43, 31, 27, 0.22),
+    0 7px 0 var(--ink),
+    0 0 0 5px var(--parchment),
+    0 0 0 8px var(--ink);
+}
+.suit[aria-checked="true"] span:last-child {
+  font-weight: 700;
+}
+.suit[aria-checked="false"] .token {
+  filter: saturate(0.75);
+}
+
+.cost-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-height: 48px;
+  flex-wrap: wrap;
+}
+.slots {
+  display: flex;
+  gap: 8px;
+}
+.slot {
+  width: 40px;
+  height: 40px;
+  border-radius: 50%;
+  border: 2px dashed var(--ink-soft);
+  background: rgba(255, 250, 235, 0.45);
+}
+.slot.filled {
+  appearance: none;
+  padding: 0;
+  border: 2px solid var(--ink);
+  background: var(--c);
+  display: grid;
+  place-items: center;
+  cursor: pointer;
+}
+.slot.filled svg {
+  width: 62%;
+  height: 62%;
+}
+.link {
+  appearance: none;
+  border: 0;
+  background: none;
+  padding: 6px 4px;
+  color: var(--ink-soft);
+  font: 500 0.95rem var(--ui);
+  text-decoration: underline;
+  text-underline-offset: 3px;
+  cursor: pointer;
+}
+.adders {
+  display: flex;
+  gap: 8px;
+  margin-top: 12px;
+  flex-wrap: wrap;
+}
+.chip {
+  appearance: none;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 12px 6px 6px;
+  border: 2px solid var(--ink);
+  border-radius: 999px;
+  background: var(--parchment-light);
+  font: 500 0.95rem/1 var(--ui);
+  cursor: pointer;
+}
+.chip i {
+  width: 26px;
+  height: 26px;
+  border-radius: 50%;
+  display: grid;
+  place-items: center;
+  background: var(--c);
+  border: 1.5px solid var(--ink);
+  font-style: normal;
+}
+.chip i svg {
+  width: 70%;
+  height: 70%;
+}
+.chip:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+/* прев'ю карти */
+.card {
+  position: relative;
+  width: 104px;
+  aspect-ratio: 5 / 7;
+  transform-style: preserve-3d;
+  transform: rotate(-3deg) rotateY(180deg);
+  transition: transform 520ms cubic-bezier(0.2, 0.8, 0.2, 1);
+}
+.card.face-up {
+  transform: rotate(-3deg) rotateY(0deg);
+}
+.card > div {
+  position: absolute;
+  inset: 0;
+  backface-visibility: hidden;
+  border: 2.5px solid var(--ink);
+  border-radius: 10px;
+  box-shadow: 0 6px 0 rgba(43, 31, 27, 0.35);
+}
+.card-back {
+  transform: rotateY(180deg);
+  background:
+    repeating-linear-gradient(45deg, transparent 0 9px, rgba(236, 223, 189, 0.16) 9px 11px),
+    repeating-linear-gradient(-45deg, transparent 0 9px, rgba(236, 223, 189, 0.16) 9px 11px),
+    var(--ribbon);
+  display: grid;
+  place-items: center;
+  color: var(--parchment);
+  font: 0.85rem/1.25 var(--display);
+  text-align: center;
+  padding: 8px;
+}
+.card-back span {
+  padding: 8px 10px;
+  background: var(--ribbon-dark);
+  border: 1.5px solid var(--parchment);
+  border-radius: 6px;
+}
+.card-face {
+  background: var(--parchment-light);
+  overflow: hidden;
+  display: grid;
+  grid-template-rows: 26px 1fr auto;
+}
+.card-face header {
+  background: var(--c, var(--any));
+  border-bottom: 2px solid var(--ink);
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 0 8px;
+  font: 0.95rem/1 var(--display);
+}
+.card-face header svg {
+  width: 18px;
+  height: 18px;
+}
+.card-art {
+  display: grid;
+  place-items: center;
+  color: var(--c, var(--any));
+}
+.card-art svg {
+  width: 64%;
+  height: auto;
+  filter: drop-shadow(0 2px 0 var(--ink));
+}
+.card-cost {
+  display: flex;
+  gap: 4px;
+  padding: 0 8px 9px;
+  min-height: 34px;
+  align-items: flex-end;
+}
+.card-cost b {
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  border: 1.5px solid var(--ink);
+  background: var(--c);
+  display: grid;
+  place-items: center;
+}
+.card-cost b svg {
+  width: 70%;
+  height: 70%;
+}
+.card-cost small {
+  color: var(--ink-soft);
+  font-size: 0.8rem;
+}
+.flying {
+  position: fixed;
+  z-index: 50;
+  pointer-events: none;
+  transition:
+    transform 700ms cubic-bezier(0.5, 0, 0.3, 1),
+    opacity 700ms ease-in;
+}
+
+/* ---------- Бій і кубики ---------- */
+.versus {
+  display: grid;
+  grid-template-columns: 1fr auto 1fr;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 18px;
+}
+.plate {
+  --paper: var(--faction);
+  padding: 8px 10px;
+  color: #fff;
+  font: 1.05rem/1.15 var(--display);
+  text-align: center;
+  text-shadow: 0 1px 0 rgba(43, 31, 27, 0.55);
+}
+.vs {
+  font: 1.6rem/1 var(--versal);
+  color: var(--ink);
+}
+.faces {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 10px;
+}
+.face {
+  appearance: none;
+  height: 60px;
+  border: 2.5px solid var(--ink);
+  border-radius: 14px;
+  background: var(--parchment-light);
+  font: 1.9rem/1 var(--display);
+  cursor: pointer;
+  box-shadow: 0 3px 0 var(--ink);
+  transition:
+    transform 140ms ease,
+    background 140ms ease;
+}
+.face[aria-checked="true"] {
+  background: var(--marquise);
+  color: #fff;
+  text-shadow: 0 1px 0 rgba(43, 31, 27, 0.55);
+  transform: translateY(-3px);
+  box-shadow: 0 6px 0 var(--ink);
+}
+.swords .faces {
+  grid-template-columns: repeat(4, 1fr);
+  gap: 8px;
+}
+@media (min-width: 480px) {
+  .swords .faces {
+    grid-template-columns: repeat(8, 1fr);
+    gap: 6px;
+  }
+}
+.swords .face {
+  height: 46px;
+  font-size: 1.35rem;
+  border-radius: 10px;
+}
+.swords .face[aria-checked="true"] {
+  background: var(--vagabond);
+}
+
+/* Лоток для кубиків: зелене сукно, кубики котяться зліва й падають посередині */
+.tray {
+  position: relative;
+  margin: 4px 0 0;
+  padding: 26px 12px 14px;
+  border: 2.5px solid var(--ink);
+  border-radius: 14px;
+  background:
+    radial-gradient(ellipse at 50% 40%, rgba(255, 255, 255, 0.1), transparent 65%),
+    var(--ribbon);
+  box-shadow:
+    inset 0 6px 14px rgba(0, 0, 0, 0.35),
+    0 3px 0 var(--ink);
+  overflow: hidden;
+}
+.swords + .tray {
+  margin-top: 20px;
+}
+.tray-dice {
+  display: flex;
+  justify-content: center;
+  gap: 22px;
+}
+.die {
+  width: 104px;
+  height: 104px;
+  filter: drop-shadow(0 6px 0 rgba(0, 0, 0, 0.35));
+}
+.die svg {
+  width: 100%;
+  height: 100%;
+}
+.die-value {
+  font: 34px var(--display);
+  fill: var(--ink);
+}
+.tray-status {
+  margin: 14px 0 0;
+  color: var(--parchment-light);
+  text-align: center;
+  font-weight: 500;
+}
+.send-hint {
+  margin: 10px 0 0;
+}
+
+/* ---------- Кнопки-плашки ---------- */
+.slab {
+  appearance: none;
+  border: 0;
+  background: none;
+  padding: 14px 20px;
+  width: 100%;
+  color: #fff;
+  font: 1.35rem/1.1 var(--display);
+  text-shadow: 0 1px 0 rgba(43, 31, 27, 0.6);
+  cursor: pointer;
+}
+.slab::before {
+  box-shadow: 0 4px 0 var(--ink);
+}
+.slab.primary {
+  --paper: var(--marquise);
+  font-size: 1.5rem;
+  padding: 16px 20px;
+}
+.slab.primary:active {
+  transform: translateY(2px);
+}
+.slab.go {
+  --paper: var(--ribbon);
+}
+.slab[aria-disabled="true"],
+.slab:disabled {
+  --paper: #b9a682;
+  color: #f3ead5;
+  cursor: not-allowed;
+}
+.slab.huge {
+  font-size: 1.9rem;
+  padding: 26px 20px;
+}
+.send-dock {
+  position: sticky;
+  bottom: 12px;
+  z-index: 5;
+  margin-top: 22px;
+}
+.send-error {
+  margin: 10px 0 0;
+  color: var(--error-ink);
+  font-weight: 500;
+}
+
+/* інші сигнали */
+.others {
+  display: grid;
+  gap: 10px;
+}
+.others h2 {
+  margin: 0;
+  font: 1.2rem/1.2 var(--display);
+  color: var(--cream);
+  text-shadow: 0 1px 3px rgba(20, 14, 12, 0.7); /* і на світлому денному небі */
+}
+.others-row {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
+}
+.slab.quiet {
+  --paper: var(--muted);
+  font-size: 1.05rem;
+  padding: 11px 12px;
+}
+.slab.quiet.danger {
+  --paper: var(--danger);
+}
+.others-row .danger,
+.others-row .wide {
+  grid-column: 1 / -1;
+}
+
+/* ---------- Стан «рука рухається», помилка ---------- */
+.arm-note {
+  display: inline-flex;
+  gap: 10px;
+  align-items: center;
+  text-align: left;
+  padding: 10px 14px;
+  border: 2px solid var(--ink);
+  border-radius: 8px;
+  background: #fff4d6;
+  font-weight: 500;
+}
+.arm-note svg {
+  flex: none;
+  width: 28px;
+  height: 28px;
+}
+.busy-art {
+  width: 84px;
+  height: 84px;
+  margin: 4px auto 10px;
+  color: var(--steel);
+  filter: drop-shadow(0 3px 0 var(--ink));
+}
+.spin {
+  animation: spin 6s linear infinite;
+}
+@keyframes spin {
+  to {
+    transform: rotate(1turn);
+  }
+}
+.error-detail {
+  margin: 0 0 16px;
+  padding: 10px 12px;
+  border-left: 4px solid var(--danger);
+  background: rgba(255, 250, 235, 0.55);
+  color: var(--error-ink);
+  font-size: 0.95rem;
+  overflow-wrap: anywhere;
+}
+.steps {
+  margin: 0 0 18px;
+  padding-left: 1.3em;
+}
+.steps li + li {
+  margin-top: 4px;
+}
+
+/* ---------- Повідомлення бота (Світанок) ---------- */
+.notice {
+  display: grid;
+  grid-template-columns: 64px 1fr;
+  gap: 14px 16px;
+  align-items: start;
+  max-width: 560px;
+  margin: 0 auto;
+}
+.speaker {
+  width: 64px;
+  height: 64px;
+  border-radius: 50%;
+  display: grid;
+  place-items: center;
+  background: var(--steel);
+  border: 2.5px solid var(--ink);
+  box-shadow: 0 3px 0 var(--ink);
+  color: var(--marquise);
+}
+.speaker svg {
+  width: 70%;
+  height: 70%;
+}
+.bubble {
+  --paper: var(--parchment-light);
+  padding: 16px 18px 18px;
+  animation: bubble-in 420ms cubic-bezier(0.2, 0.9, 0.3, 1.2) both;
+}
+.bubble::after {
+  /* хвостик до кота */
+  content: "";
+  position: absolute;
+  left: -11px;
+  top: 22px;
+  width: 18px;
+  height: 18px;
+  background: var(--parchment-light);
+  border-left: 2px solid var(--ink);
+  border-bottom: 2px solid var(--ink);
+  transform: rotate(45deg);
+}
+.said {
+  margin: 0 0 12px;
+  font: 1.45rem/1.25 var(--display);
+}
+.gain {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+}
+.gain .medal {
+  flex: none;
+  width: 78px;
+  height: 78px;
+  font-size: 1.6rem;
+}
+.gain p {
+  margin: 0;
+}
+.next {
+  grid-column: 2;
+  display: grid;
+  gap: 6px;
+  color: var(--ink-soft);
+  font-size: 0.95rem;
+}
+.progress {
+  height: 8px;
+  border: 1.5px solid var(--ink);
+  border-radius: 999px;
+  background: rgba(255, 250, 235, 0.6);
+  overflow: hidden;
+}
+.progress i {
+  display: block;
+  height: 100%;
+  background: var(--marquise);
+  transform-origin: left;
+  animation: fill linear both;
+}
+@keyframes fill {
+  from {
+    transform: scaleX(0);
+  }
+  to {
+    transform: scaleX(1);
+  }
+}
+@keyframes bubble-in {
+  from {
+    opacity: 0;
+    transform: scale(0.92) translateY(6px);
+  }
+}
+
+/* ---------- Кінець гри ---------- */
+.final {
+  list-style: none;
+  margin: 0 0 8px;
+  padding: 0;
+  display: grid;
+  gap: 12px;
+}
+.final .score {
+  display: grid;
+  grid-template-columns: 64px 1fr;
+}
+.final .medal {
+  width: 64px;
+  height: 64px;
+  font-size: 1.7rem;
+}
+.final .bar {
+  width: auto;
+  font-size: 1.2rem;
+  padding: 10px 12px 10px 22px;
+}
+.final .leader .bar small {
+  margin-left: 8px;
+  font-size: 0.85rem;
+  opacity: 0.9;
+}
+
+/* ---------- Діалог і сповіщення ---------- */
+dialog {
+  border: 0;
+  padding: 0;
+  background: none;
+  max-width: min(420px, calc(100vw - 32px));
+}
+dialog::backdrop {
+  background: rgba(43, 31, 27, 0.55);
+}
+.confirm {
+  --paper: var(--parchment);
+  padding: 22px 20px 20px;
+}
+.confirm h2 {
+  margin: 0 0 6px;
+  font: 1.5rem/1.2 var(--display);
+}
+.confirm p {
+  margin: 0 0 18px;
+}
+.confirm .row {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
+}
+.confirm .slab {
+  font-size: 1.1rem;
+  padding: 12px 14px;
+}
+.toast {
+  --paper: var(--ink);
+  position: fixed;
+  left: 50%;
+  bottom: 18px;
+  z-index: 60;
+  transform: translateX(-50%);
+  max-width: calc(100vw - 32px);
+  padding: 10px 18px;
+  color: var(--cream);
+  font-weight: 500;
+}
+
+/* ---------- Фокус і службове ---------- */
+:focus {
+  outline: none;
+}
+:focus-visible {
+  outline: 3px dashed var(--ink);
+  outline-offset: 4px;
+  border-radius: 6px;
+}
+.suit:focus-visible {
+  outline: none;
+}
+.suit:focus-visible .token {
+  outline: 3px dashed var(--ink);
+  outline-offset: 10px;
+}
+.others .slab:focus-visible {
+  outline-color: var(--cream);
+}
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+}
+
+/* ---------- Планшет і ноутбук ---------- */
+/* Планшет і ноутбук: одна колонка — табло вгорі, широкий аркуш посередині, сигнали внизу */
+@media (min-width: 760px) {
+  .app {
+    gap: 20px;
+    padding-top: 20px;
+  }
+  .topbar {
+    flex-direction: row;
+    justify-content: space-between;
+  }
+  .wordmark {
+    --tile-w: 46px;
+    gap: 5px;
+    padding: 10px 16px;
+  }
+  .scores {
+    gap: 12px 22px;
+  }
+  .banner {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    justify-content: space-between;
+    gap: 6px 18px;
+    padding: 14px 26px 16px;
+    text-align: left;
+  }
+  .banner .detail,
+  .phase {
+    margin: 0;
+  }
+  .banner .detail {
+    margin-right: auto;
+  }
+  .banner.win {
+    justify-content: center;
+  }
+  .sheet {
+    padding: 32px 36px 34px;
+  }
+  .sheet-grid {
+    grid-template-columns: 200px 1fr;
+    grid-template-areas:
+      "card suit"
+      "card cost"
+      "forecast forecast";
+    column-gap: 36px;
+  }
+  .card-stage {
+    align-self: start;
+    padding-top: 8px;
+  }
+  .card {
+    width: 180px;
+  }
+  .card-face {
+    grid-template-rows: 34px 1fr auto;
+  }
+  .card-face header svg {
+    width: 22px;
+    height: 22px;
+  }
+  .card .card-cost b {
+    width: 24px;
+    height: 24px;
+  }
+  .card-back {
+    font-size: 1rem;
+    padding: 16px;
+  }
+  .forecast {
+    align-self: auto;
+  }
+  .send-dock {
+    position: static;
+  }
+  .tray-dice {
+    gap: 40px;
+  }
+  .die {
+    width: 124px;
+    height: 124px;
+  }
+  .others-row {
+    display: flex;
+  }
+  .others-row > * {
+    flex: 1;
+  }
+}
+@media (max-width: 360px) {
+  .wordmark {
+    --tile-w: 32px;
+    gap: 3px;
+    padding: 7px 9px;
+  }
+  .token {
+    width: 54px;
+    height: 54px;
+  }
+  .score .bar {
+    font-size: 0.92rem;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  :root {
+    --sky-change: 0s;
+  }
+  .card,
+  .token,
+  .face,
+  .flying {
+    transition: none;
+  }
+  .spin,
+  .bubble {
+    animation: none;
+  }
+}

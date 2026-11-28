@@ -34,7 +34,8 @@ def birdsong(state: GameState, *, points_per_clearing: int, min_warriors: int) -
         if state.ruling_faction(c.id) == BOT and state.counts(c.id, BOT).warriors >= min_warriors
     ]
     clearings = ", ".join(str(c) for c in scoring) or "none"
-    return Score(points_per_clearing * len(scoring), f"birdsong: scoring clearings {clearings}")
+    reason = f"birdsong: scoring clearings {clearings}"
+    return Score(points_per_clearing * len(scoring), reason, tuple(scoring))
 
 
 def battles(state: GameState, card: OrderCard) -> list[Battle]:

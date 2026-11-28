@@ -44,3 +44,4 @@ class Recruit:
 class Score:
     points: int
     reason: str
+    clearings: tuple[ClearingId, ...] = ()  # за які галявини (Світанок), у порядку пріоритету

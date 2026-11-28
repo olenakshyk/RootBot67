@@ -23,7 +23,7 @@ import threading
 from dataclasses import dataclass, field, replace
 from typing import Any
 
-from rootbot.common.types import Faction, OrderCard
+from rootbot.common.types import ClearingId, Faction, OrderCard
 
 
 @dataclass(frozen=True)
@@ -34,6 +34,11 @@ class YourTurn:
 @dataclass(frozen=True)
 class EndGame:
     """Кінець партії (оператор вирішив або хтось переміг; тимчасово: AUT-6)."""
+
+
+@dataclass(frozen=True)
+class NewGame:
+    """«Play again» після кінця гри: люди розставили дошку заново, бот починає нову партію."""
 
 
 @dataclass(frozen=True)
@@ -64,7 +69,29 @@ class DiceRolled:
     vagabond_swords: int | None = None  # непошкоджені мечі, якщо захищається Бродяга
 
 
-Signal = YourTurn | EndGame | CardGiven | KeepRemoved | OrderCardRevealed | DiceRolled
+Signal = YourTurn | EndGame | NewGame | CardGiven | KeepRemoved | OrderCardRevealed | DiceRolled
+
+
+@dataclass(frozen=True)
+class BattleInfo:
+    """Бій, для якого бот чекає кубики: застосунок питає мечі Бродяги, лише якщо захищається він."""
+
+    clearing: ClearingId
+    defender: Faction
+
+
+@dataclass(frozen=True)
+class Notice:
+    """Повідомлення бота людям, яке застосунок показує seconds секунд, поки бот чекає.
+
+    kind: "birdsong" — бот оглянув дошку на Світанку й нарахував собі points ПО
+    за галявини clearings.
+    """
+
+    kind: str
+    points: int
+    clearings: tuple[ClearingId, ...]
+    seconds: float
 
 
 @dataclass(frozen=True)
@@ -72,10 +99,18 @@ class BotStatus:
     """Що застосунок показує оператору."""
 
     step: str = "starting"  # що бот робить зараз
-    waiting_for: str | None = None  # чого чекає від людини: "your_turn", "order_card", "dice"
+    # чого чекає від людини: "your_turn", "order_card", "dice", "new_game" (після кінця гри)
+    waiting_for: str | None = None
     scores: dict[Faction, int] = field(default_factory=dict)
     message: str = ""  # що зробити людям (зняти фігурки, добрати карти)
     error: str | None = None  # остання помилка, якщо потрібна допомога
+    battle: BattleInfo | None = None  # поточний бій, поки waiting_for == "dice"
+    keep_destroyed: bool = False  # Keep не відбудовують: застосунок ховає кнопку «Keep знищено»
+    winner: Faction | None = None  # хто набрав win_points (None, якщо гру завершив оператор)
+    notice: Notice | None = None  # повідомлення бота (наприклад, ПО на Світанку), поки бот чекає
+    # поки waiting_for == "order_card": скільки карт Розкладу ще не відкрито в цьому ході
+    # (менше за schedule_size — День почався заново, бо попередня карта була без вартості крафту)
+    cards_left: int | None = None
 
 
 class OperatorServer:
@@ -91,6 +126,9 @@ class OperatorServer:
 
     def end_game(self) -> None:
         self._signals.put(EndGame())
+
+    def new_game(self) -> None:
+        self._signals.put(NewGame())
 
     def card_given(self) -> None:
         self._signals.put(CardGiven())
@@ -120,6 +158,11 @@ class OperatorServer:
     def set_status(self, **changes: Any) -> None:
         with self._lock:
             self._status = replace(self._status, **changes)
+
+    def reset_status(self) -> None:
+        """Нова партія: стан з нуля (рахунок, Keep, переможець)."""
+        with self._lock:
+            self._status = BotStatus()
 
 
 def create_operator_server(cfg: dict) -> OperatorServer:

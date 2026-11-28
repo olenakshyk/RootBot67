@@ -54,6 +54,7 @@ def _config(tmp_path, **overrides):
     cfg["camera"]["folder"] = str(frames)
     cfg["logging"]["dir"] = str(tmp_path / "logs")
     cfg["operator_server"]["port"] = 0  # будь-який вільний порт: 8000 може бути зайнятий
+    cfg["orchestrator"]["new_game_wait_s"] = 0  # після кінця гри не чекати «Play again»
     reference = tmp_path / "board.png"  # еталон дошки: будь-яка текстура з ключовими точками
     texture = np.random.default_rng(0).integers(0, 255, (200, 300, 3), dtype=np.uint8)
     cv2.imwrite(str(reference), cv2.GaussianBlur(texture, (5, 5), 0))

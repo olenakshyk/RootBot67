@@ -25,6 +25,9 @@ dev = ["pytest>=8", "pytest-cov>=5", "ruff>=0.6", "httpx>=0.27"]  # httpx: FastA
 [tool.setuptools.packages.find]
 where = ["src"]
 
+[tool.setuptools.package-data]
+"rootbot.app" = ["static/**/*"]  # застосунок оператора
+
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 

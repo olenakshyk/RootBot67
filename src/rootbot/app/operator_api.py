@@ -4,6 +4,7 @@
 
 Обробники лише викликають методи OperatorServer: сигнали йдуть у його чергу, стан читається
 з current_state(). Самі обробники нічого не знають про game, vision, robot (NFR-S3).
+Той самий сервер роздає й сам застосунок (static/, Preact + htm без збірки) за адресою «/».
 
 start_operator_api() запускає uvicorn у фоновому потоці (daemon), Orchestrator лишається
 в головному. Хост, порт і дозволені джерела (CORS) — у config/default.yaml -> operator_server.
@@ -15,10 +16,12 @@ import logging
 import threading
 import time
 from http import HTTPStatus
+from pathlib import Path
 
 import uvicorn
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
 from rootbot.app.operator_ui import OperatorServer
@@ -27,6 +30,8 @@ from rootbot.common.types import OrderCard, Suit
 from rootbot.game.marquise_bot import DIE_FACES
 
 log = logging.getLogger(__name__)
+
+STATIC_DIR = Path(__file__).parent / "static"  # застосунок оператора
 
 
 class OrderCardIn(BaseModel):
@@ -39,12 +44,29 @@ class DiceIn(BaseModel):
     vagabond_swords: int | None = Field(default=None, ge=0)
 
 
+class BattleOut(BaseModel):
+    clearing: int
+    defender: str  # Faction.value
+
+
+class NoticeOut(BaseModel):
+    kind: str  # "birdsong"
+    points: int
+    clearings: list[int]
+    seconds: float  # скільки показувати, перш ніж бот піде далі
+
+
 class StateOut(BaseModel):
     step: str
     waiting_for: str | None
     scores: dict[str, int]  # фракція (Faction.value) -> ПО
     message: str
     error: str | None
+    battle: BattleOut | None  # бій, для якого чекаємо кубики
+    keep_destroyed: bool  # Keep знищено (його не відбудовують)
+    winner: str | None  # Faction.value того, хто набрав win_points
+    notice: NoticeOut | None  # повідомлення бота людям
+    cards_left: int | None  # карт Розкладу ще не відкрито (поки чекаємо карту наказу)
 
 
 def create_app(server: OperatorServer, cors_origins: list[str] | None = None) -> FastAPI:
@@ -64,6 +86,10 @@ def create_app(server: OperatorServer, cors_origins: list[str] | None = None) ->
     @app.post("/signals/end-game", status_code=accepted)
     def end_game() -> None:
         server.end_game()
+
+    @app.post("/signals/new-game", status_code=accepted)
+    def new_game() -> None:
+        server.new_game()
 
     @app.post("/signals/card-given", status_code=accepted)
     def card_given() -> None:
@@ -98,8 +124,24 @@ def create_app(server: OperatorServer, cors_origins: list[str] | None = None) ->
             scores={faction.value: points for faction, points in now.scores.items()},
             message=now.message,
             error=now.error,
+            battle=BattleOut(clearing=now.battle.clearing, defender=now.battle.defender.value)
+            if now.battle
+            else None,
+            keep_destroyed=now.keep_destroyed,
+            winner=now.winner.value if now.winner else None,
+            notice=NoticeOut(
+                kind=now.notice.kind,
+                points=now.notice.points,
+                clearings=list(now.notice.clearings),
+                seconds=now.notice.seconds,
+            )
+            if now.notice
+            else None,
+            cards_left=now.cards_left,
         )
 
+    # останнім: шляхи API вище мають перевагу над файлами
+    app.mount("/", StaticFiles(directory=STATIC_DIR, html=True), name="app")
     return app
 
 

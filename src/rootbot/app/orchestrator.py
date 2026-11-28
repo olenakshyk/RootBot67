@@ -20,10 +20,13 @@ from py_trees.common import Status
 
 from rootbot.app.move_planner import MovePlanner
 from rootbot.app.operator_ui import (
+    BattleInfo,
     CardGiven,
     DiceRolled,
     EndGame,
     KeepRemoved,
+    NewGame,
+    Notice,
     OperatorServer,
     OrderCardRevealed,
     YourTurn,
@@ -31,7 +34,7 @@ from rootbot.app.operator_ui import (
 from rootbot.common.errors import FatalError
 from rootbot.common.types import Faction, OrderCard
 from rootbot.game import marquise_bot as bot
-from rootbot.game.actions import Battle
+from rootbot.game.actions import Battle, Score
 from rootbot.game.board import Board
 from rootbot.game.state import BOT, GameState
 from rootbot.robot.arm import Arm
@@ -53,6 +56,9 @@ class TurnContext:
     turn_requested: bool = False
     resume: bool = False  # «Хід бота» під час ходу: людина допомогла, продовжити
     game_over: bool = False
+    winner: Faction | None = None  # хто набрав win_points
+    birdsong: Score | None = None  # ПО на Світанку цього ходу: про них бот розповідає людям
+    notice_until: float | None = None  # time.monotonic(), до якого показується повідомлення
     cards_given: int = 0
     order_cards: list[OrderCard] = field(default_factory=list)
     dice: list[DiceRolled] = field(default_factory=list)
@@ -91,6 +97,7 @@ class Orchestrator:
         self.server = server
         self.tick_period_s: float = cfg["orchestrator"]["tick_period_s"]
         self.step_retries: int = cfg["orchestrator"]["step_retries"]
+        self.notice_s: float = cfg["orchestrator"]["notice_s"]
         self.max_rechecks: int = cfg["camera"]["max_rechecks"]
         self.win_points: int = cfg["game"]["win_points"]
         self.schedule_size: int = cfg["game"]["evening"]["schedule_size"]
@@ -101,6 +108,7 @@ class Orchestrator:
         """Партія: тикати дерево, поки не кінець гри. Ctrl+C іде нагору в main."""
         log.debug(f"behaviour tree:\n{py_trees.display.unicode_tree(self.tree.root)}")
         log.info("Orchestrator: started, waiting for signals")
+        self.server.reset_status()  # нова партія: рахунок, Keep, переможець з нуля
         tip = None
         while not self.ctx.game_over:
             self.tree.tick()
@@ -111,8 +119,18 @@ class Orchestrator:
                 log.debug(f"tree:\n{shown}")
             time.sleep(self.tick_period_s)
         self.tree.root.stop(Status.INVALID)
-        self.status(step="game over", waiting_for=None)
-        log.info(f"Orchestrator: game over, scores {self._scores()}")
+        if self.ctx.in_turn:  # гру завершили посеред ходу (EndGame): рука з дошки
+            self.arm.home()
+        self.status(
+            step="game over",
+            waiting_for="new_game",
+            winner=self.ctx.winner,
+            notice=None,
+            message="",
+            error=None,
+            battle=None,
+        )
+        log.info(f"Orchestrator: game over, winner {self.ctx.winner}, scores {self._scores()}")
 
     def build_tree(self) -> py_trees.behaviour.Behaviour:
         def retry(step: Step) -> RetryOrAskHuman:
@@ -137,6 +155,7 @@ class Orchestrator:
                 retry(ScanBoard(self)),
                 NobodyWon(self),
                 retry(Birdsong(self)),
+                AnnounceBirdsong(self),
                 RepeatDay(self, day),
                 Evening(self),
                 FinishTurn(self),
@@ -200,7 +219,11 @@ class Orchestrator:
         old = scores.get(BOT, 0)
         scores[BOT] = old + points
         log.info(f"score +{points} ({reason}): {old} -> {scores[BOT]}")
-        self.ctx.tasks += self.planner.score(old, scores[BOT])
+        self.ctx.tasks += self.planner.score(old, scores[BOT])  # маркер рахунку рука ще пересуне
+        if scores[BOT] >= self.win_points and not self.ctx.game_over:
+            # перемога одразу, а не на початку наступного ходу: решта кроків уже не виконується
+            log.info(f"bot reached {self.win_points} VP")
+            self.ctx.game_over, self.ctx.winner = True, BOT
 
     def run_tasks(self) -> None:
         """Виконати заплановані переміщення; задача знімається з черги лише після успіху."""
@@ -227,7 +250,11 @@ class Step(py_trees.behaviour.Behaviour):
         super().__init__(name or type(self).__name__)
         self.o = o
 
+    stops_on_game_over = True  # після кінця гри крок не виконується (AbortTurn — так)
+
     def update(self) -> Status:
+        if self.o.ctx.game_over and self.stops_on_game_over:
+            return Status.FAILURE
         try:
             return self.step()
         except FatalError:
@@ -265,10 +292,13 @@ class ReadSignals(Step):
                         ctx.turn_requested = True
                 case EndGame():
                     ctx.game_over = True
+                case NewGame():
+                    log.info("new game: ignored, this game is not over")
                 case CardGiven():
                     ctx.cards_given += 1
                 case KeepRemoved():  # тимчасово: AUT-13
                     ctx.state.keep_clearing = None
+                    self.o.status(keep_destroyed=True)
                 case OrderCardRevealed(card=card):
                     ctx.order_cards.append(card)
                 case DiceRolled():
@@ -299,6 +329,7 @@ class StartTurn(Step):
         ctx = self.o.ctx
         ctx.in_turn, ctx.resume, ctx.error = True, False, None
         ctx.cards_used, ctx.card = 0, None
+        ctx.birdsong, ctx.notice_until = None, None
         ctx.done.clear()
         log.info("=== bot turn ===")
         self.o.status(step="birdsong: scanning the board", waiting_for=None, message="", error=None)
@@ -317,11 +348,13 @@ class ScanBoard(Step):
 
 class NobodyWon(Step):
     def step(self) -> Status:
-        winners = [f.value for f, s in self.o.ctx.state.scores.items() if s >= self.o.win_points]
+        scores = self.o.ctx.state.scores
+        winners = [f for f, s in scores.items() if s >= self.o.win_points]
         if not winners:
             return Status.SUCCESS
-        log.info(f"{', '.join(winners)} reached {self.o.win_points} VP")
+        log.info(f"{', '.join(f.value for f in winners)} reached {self.o.win_points} VP")
         self.o.ctx.game_over = True
+        self.o.ctx.winner = max(winners, key=lambda f: scores[f])
         return Status.FAILURE
 
 
@@ -330,8 +363,26 @@ class Birdsong(Step):
         if "birdsong" not in self.o.ctx.done:
             score = bot.birdsong(self.o.ctx.state, **self.o.game["birdsong"])
             self.o.add_score(score.points, score.reason)
+            self.o.ctx.birdsong = score
             self.o.ctx.done.add("birdsong")
         self.o.run_tasks()
+        return Status.SUCCESS
+
+
+class AnnounceBirdsong(Step):
+    """Пауза після Світанку: застосунок показує, скільки ПО бот собі нарахував, і лише тоді День."""
+
+    def step(self) -> Status:
+        ctx = self.o.ctx
+        if ctx.notice_until is None:
+            score = ctx.birdsong or Score(0, "")
+            notice = Notice("birdsong", score.points, score.clearings, self.o.notice_s)
+            self.o.status(step="birdsong: scored", waiting_for=None, notice=notice)
+            ctx.notice_until = time.monotonic() + self.o.notice_s
+        if time.monotonic() < ctx.notice_until:
+            return Status.RUNNING
+        ctx.notice_until = None
+        self.o.status(notice=None)
         return Status.SUCCESS
 
 
@@ -339,7 +390,14 @@ class WaitOrderCard(Step):
     def step(self) -> Status:
         ctx = self.o.ctx
         if not ctx.order_cards:
-            self.o.wait_for("order_card", "daylight: reveal the left order card")
+            left = self.o.schedule_size - ctx.cards_used
+            if ctx.cards_used == 0:
+                self.o.wait_for(
+                    "order_card", "daylight: reveal the left order card", cards_left=left
+                )
+            else:  # RepeatDay: попередня карта без вартості крафту
+                step = "daylight: no craft cost, reveal the next order card"
+                self.o.wait_for("order_card", step, cards_left=left)
             return Status.RUNNING
         ctx.card = ctx.order_cards.pop(0)
         ctx.cards_used += 1
@@ -348,7 +406,7 @@ class WaitOrderCard(Step):
         log.info(
             f"order card: {ctx.card.suit.value}, craft {[s.value for s in ctx.card.craft_cost]}"
         )
-        self.o.status(step="daylight", waiting_for=None)
+        self.o.status(step="daylight", waiting_for=None, cards_left=None)
         return Status.SUCCESS
 
 
@@ -364,7 +422,11 @@ class Battles(Step):
             battle = ctx.battles[ctx.battle_index]
             if not ctx.dice:
                 where = f"battle in clearing {battle.clearing} vs {battle.defender.value}"
-                o.wait_for("dice", f"{where}: roll the dice")
+                o.wait_for(
+                    "dice",
+                    f"{where}: roll the dice",
+                    battle=BattleInfo(battle.clearing, battle.defender),
+                )
                 return Status.RUNNING
             dice = ctx.dice.pop(0)
             result = bot.resolve_battle(
@@ -377,7 +439,8 @@ class Battles(Step):
             if result.keep_lost:
                 state.keep_clearing = None
                 message += "; remove the Keep"  # тимчасово: AUT-8
-            o.status(step="daylight: battle", waiting_for=None, message=message)
+                o.status(keep_destroyed=True)
+            o.status(step="daylight: battle", waiting_for=None, message=message, battle=None)
             ctx.tasks += o.planner.remove(battle.clearing, result.bot_warriors_lost)
             ctx.battle_index += 1
             o.run_tasks()
@@ -456,6 +519,8 @@ class FinishTurn(Step):
 class AbortTurn(Step):
     """Хід не вдався без повтору (кінець гри): рука в home, хід завершено."""
 
+    stops_on_game_over = False
+
     def step(self) -> Status:
         self.o.arm.home()
         self.o.ctx.in_turn = self.o.ctx.turn_requested = False
@@ -518,3 +583,21 @@ class RetryOrAskHuman(py_trees.decorators.Decorator):
     def terminate(self, new_status: Status) -> None:
         if new_status != Status.RUNNING:
             self.failures, self.waiting = 0, False
+
+
+def wait_for_new_game(server: OperatorServer, poll_s: float, timeout_s: float | None) -> bool:
+    """Після кінця гри: чекати «Play again» (NewGame). Інші сигнали відкидаються.
+
+    True — почати нову партію; False — минув timeout_s (None: чекати вічно, вийти можна Ctrl+C).
+    """
+    deadline = None if timeout_s is None else time.monotonic() + timeout_s
+    while deadline is None or time.monotonic() < deadline:
+        signal = server.next_signal()
+        if isinstance(signal, NewGame):
+            log.info("=== new game ===")
+            return True
+        if signal is None:
+            time.sleep(poll_s)
+        else:
+            log.info(f"game over, ignored: {signal}")
+    return False
