@@ -29,12 +29,12 @@ from pathlib import Path
 from typing import TypeVar
 
 from rootbot.app.move_planner import create_move_planner
-from rootbot.app.operator_ui import create_operator_server
+from rootbot.app.operator_ui import OperatorServer, create_operator_server
 from rootbot.app.orchestrator import Orchestrator
 from rootbot.common.errors import FatalError, TemporaryError
 from rootbot.config import ROOT, load_config
 from rootbot.game.board import create_board
-from rootbot.robot.arm import create_arm
+from rootbot.robot.arm import Arm, create_arm
 from rootbot.robot.manipulator import create_manipulator
 from rootbot.robot.scan import create_scanner
 from rootbot.vision.camera import create_camera
@@ -86,7 +86,7 @@ def main(argv: list[str] | None = None) -> int:
     log_file = setup_logging(cfg)
     log.info(f"start, log: {log_file}")
 
-    arm = camera = None
+    arm = camera = server = None
     try:
         camera = create_with_retry("camera", lambda: create_camera(cfg), cfg)
         arm = create_with_retry("arm", lambda: create_arm(cfg), cfg)
@@ -123,8 +123,18 @@ def main(argv: list[str] | None = None) -> int:
         return 130
     finally:
         if arm is not None:
-            arm.home()
+            home_or_report(arm, server)
         log.info("===END===")
+
+
+def home_or_report(arm: Arm, server: OperatorServer | None) -> None:
+    """Рука в home наприкінці; збій руки лише в лозі й у статусі, код виходу не змінюється."""
+    try:
+        arm.home()
+    except Exception as e:
+        log.exception("arm home failed")
+        if server is not None:
+            server.set_status(error=f"arm home failed: {e}")
 
 
 if __name__ == "__main__":

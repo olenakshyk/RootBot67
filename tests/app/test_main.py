@@ -78,3 +78,14 @@ def test_main_starts_with_mocks(tmp_path, monkeypatch):
 
 def test_main_stops_on_fatal(tmp_path):
     assert main_mod.main(["--config", str(_config(tmp_path, **{"robot.mock": False}))]) == 1
+
+
+class StuckArm:
+    def home(self) -> None:
+        raise RuntimeError("arm stuck")
+
+
+def test_home_failure_at_exit_is_reported():
+    server = OperatorServer(die_max=6)
+    main_mod.home_or_report(StuckArm(), server)
+    assert server.current_state().error == "arm home failed: arm stuck"

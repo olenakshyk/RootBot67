@@ -5,8 +5,13 @@
 вимоги — docs/requirements/orchestrator.md.
 
 Кроки не повторюють уже зроблене: дії плануються раз (TurnContext.done), дія знімається з черги
-TurnContext.actions лише після планування, задача руки з черги TurnContext.tasks — лише після
-успішного переміщення.
+TurnContext.actions лише після планування.
+
+Дія бота, що рухає фігурки й змінює дані, атомарна (ArmAction): спершу рука виконує всі її
+переміщення (переміщення знімається з дії лише після успіху), лише потім змінюються дані —
+воїни в GameState, ПО бота. Невдала дія даних не змінює, повтор кроку продовжує ту саму дію, тож
+стан і дошка не розходяться, а ПО не рахуються двічі. Кроки виконують кожну дію, перш ніж
+планувати наступну.
 
 Галявину, якої не знає MovePlanner (ClearingNeedsScan), крок оглядає й повторюється (Step.update):
 спершу виконує вже сплановані переміщення, потім частковий огляд цієї галявини, як після боїв.
@@ -36,7 +41,7 @@ from rootbot.app.operator_ui import (
 from rootbot.common.errors import FatalError, TemporaryError
 from rootbot.common.types import ClearingId, Faction, OrderCard
 from rootbot.game import marquise_bot as bot
-from rootbot.game.actions import Battle, Move, Recruit
+from rootbot.game.actions import Battle, BattleResult, Move, Recruit
 from rootbot.game.board import Board
 from rootbot.game.state import BOT, GameState
 from rootbot.robot.arm import Arm
@@ -47,6 +52,14 @@ from rootbot.vision.detector import Detector
 from rootbot.vision.observation import BoardObservation, RecheckRequest
 
 log = logging.getLogger(__name__)
+
+
+@dataclass
+class ArmAction:
+    """Дія бота: переміщення руки (tasks) і зміна даних (apply), яка настає лише після них усіх."""
+
+    tasks: list[PieceMoveTask]
+    apply: Callable[[], None]
 
 
 @dataclass
@@ -67,7 +80,7 @@ class TurnContext:
     cards_used: int = 0  # скільки карт Розкладу відкрито в цьому ході
     done: set[str] = field(default_factory=set)  # кроки, дії яких уже пораховано
     actions: list[Move | Recruit] = field(default_factory=list)
-    tasks: list[PieceMoveTask] = field(default_factory=list)  # ще не виконані переміщення
+    arm_actions: list[ArmAction] = field(default_factory=list)  # ще не завершені дії руки
     battles: list[Battle] = field(default_factory=list)
     battle_index: int = 0
     removals: list[str] = field(default_factory=list)
@@ -98,6 +111,7 @@ class Orchestrator:
         self.server = server
         self.tick_period_s: float = cfg["orchestrator"]["tick_period_s"]
         self.step_retries: int = cfg["orchestrator"]["step_retries"]
+        self.card_given_delay_s: float = cfg["orchestrator"]["card_given_delay_s"]
         self.max_rechecks: int = cfg["camera"]["max_rechecks"]
         self.win_points: int = cfg["game"]["win_points"]
         self.schedule_size: int = cfg["game"]["evening"]["schedule_size"]
@@ -118,7 +132,7 @@ class Orchestrator:
                 log.debug(f"tree:\n{shown}")
             time.sleep(self.tick_period_s)
         self.tree.root.stop(Status.INVALID)
-        self.drop_tasks()
+        self.drop_arm_actions()
         self.status(step="game over", waiting_for=None)
         log.info(f"Orchestrator: game over, scores {self._scores()}")
 
@@ -147,8 +161,8 @@ class Orchestrator:
                 NobodyWon(self),
                 retry(Birdsong(self)),
                 RepeatDay(self, day),
-                Evening(self),
-                FinishTurn(self),
+                retry(Evening(self)),
+                retry(FinishTurn(self)),
             ],
         )
         turn = py_trees.composites.Selector("turn", memory=False, children=[steps, AbortTurn(self)])
@@ -161,8 +175,11 @@ class Orchestrator:
             "card given",
             memory=False,
             children=[
-                Check("CardGivenPending?", lambda: self.ctx.cards_given > 0),
-                ScoreCardGiven(self),
+                Check(
+                    "CardGivenPending?",
+                    lambda: self.ctx.cards_given > 0 or bool(self.ctx.arm_actions),
+                ),
+                retry(ScoreCardGiven(self)),
             ],
         )
         what_now = py_trees.composites.Selector(
@@ -240,25 +257,74 @@ class Orchestrator:
         if now.waiting_for != what or now.step != step:
             self.status(step=step, waiting_for=what, **changes)
 
-    def add_score(self, points: int, reason: str) -> None:
+    def score_action(self, points: int, reason: str) -> ArmAction:
+        """Жетон рахунку бота на points клітинок далі, потім +points ПО."""
         scores = self.ctx.state.scores
         old = scores.get(BOT, 0)
-        scores[BOT] = old + points
-        log.info(f"score +{points} ({reason}): {old} -> {scores[BOT]}")
-        self.ctx.tasks += self.planner.score(old, scores[BOT])
 
-    def run_tasks(self) -> None:
-        """Виконати заплановані переміщення; лише після успіху задача знімається з черги, а
-        MovePlanner оновлює картину дошки (done)."""
-        while self.ctx.tasks:
-            task = self.ctx.tasks[0]
-            self.manipulator.move(task)
-            self.planner.done(task)
-            self.ctx.tasks.pop(0)
+        def apply() -> None:
+            scores[BOT] = scores.get(BOT, 0) + points
+            log.info(f"score +{points} ({reason}): {scores[BOT]}")
 
-    def drop_tasks(self) -> None:
-        """Забути невиконані переміщення: черга ctx.tasks і цілі MovePlanner разом."""
-        self.ctx.tasks.clear()
+        return ArmAction(self.planner.score(old, old + points), apply)
+
+    def move_action(self, move: Move) -> ArmAction:
+        """Коти бота з move.src на move.dst, потім воїни в GameState."""
+        state = self.ctx.state
+
+        def apply() -> None:
+            state.add_warriors(move.src, -move.count)
+            state.add_warriors(move.dst, move.count)
+
+        return ArmAction(self.planner.move(move), apply)
+
+    def recruit_action(self, recruit: Recruit) -> ArmAction:
+        """Коти бота із запасу на recruit.clearing, потім воїни в GameState."""
+        state = self.ctx.state
+
+        def apply() -> None:
+            state.add_warriors(recruit.clearing, recruit.count)
+
+        return ArmAction(self.planner.recruit(recruit), apply)
+
+    def losses_action(self, battle: Battle, result: BattleResult) -> ArmAction:
+        """Втрати бота в бою — у запас, потім воїни (і Keep, якщо знятий) у GameState."""
+        state = self.ctx.state
+
+        def apply() -> None:
+            state.add_warriors(battle.clearing, -result.bot_warriors_lost)
+            if result.keep_lost:
+                state.keep_clearing = None
+
+        return ArmAction(self.planner.remove(battle.clearing, result.bot_warriors_lost), apply)
+
+    def run_arm_actions(self) -> None:
+        """Виконати дії з черги по черзі. Переміщення знімається з дії лише після успіху, тоді ж
+        MovePlanner оновлює картину дошки (done); коли всі переміщення дії вдалися — зміна даних
+        (apply), і дія знімається з черги."""
+        while self.ctx.arm_actions:
+            action = self.ctx.arm_actions[0]
+            while action.tasks:
+                task = action.tasks[0]
+                self.manipulator.move(task)
+                self.planner.done(task)
+                action.tasks.pop(0)
+            action.apply()
+            self.ctx.arm_actions.pop(0)
+
+    def home_or_report(self) -> None:
+        """Рука в home; збій руки програму не зупиняє: він у лозі й у статусі (error)."""
+        try:
+            self.arm.home()
+        except Exception as e:
+            log.exception("arm home failed")
+            failure = f"arm home failed: {e}"
+            self.ctx.error = failure if self.ctx.error is None else f"{self.ctx.error}; {failure}"
+            self.status(error=self.ctx.error)
+
+    def drop_arm_actions(self) -> None:
+        """Забути незавершені дії разом з їхніми змінами даних і цілями MovePlanner."""
+        self.ctx.arm_actions.clear()
         self.planner.drop_goals()
 
     def card(self) -> OrderCard:
@@ -296,7 +362,7 @@ class Step(py_trees.behaviour.Behaviour):
             return self.step()
         except ClearingNeedsScan as e:
             log.info(f"{self.name}: {e}, scanning it")
-            self.o.run_tasks()
+            self.o.run_arm_actions()
             self.o.scan_clearings([e.clearing], "needs scan")
             return self.step()
 
@@ -322,7 +388,7 @@ class ReadSignals(Step):
             log.info(f"signal: {signal}")
             match signal:
                 case YourTurn():
-                    if ctx.in_turn:
+                    if ctx.in_turn or ctx.arm_actions:
                         ctx.resume = True
                     else:
                         ctx.turn_requested = True
@@ -344,14 +410,28 @@ class Idle(Step):
 
 
 class ScoreCardGiven(Step):
+    """«Карту дано» між ходами: через orchestrator.card_given_delay_s рука пересуває жетон рахунку,
+    лише потім +ПО. Без доріжки рахунку переміщень немає — ПО одразу. Карта стає дією один раз
+    (cards_given -1), тож повтор продовжує ту саму дію."""
+
+    def initialise(self) -> None:
+        self.due: float | None = None
+
     def step(self) -> Status:
-        if "card_given" not in self.o.ctx.done:
-            score = bot.card_given(points=self.o.game["traits"]["card_given_points"])
-            self.o.add_score(score.points, score.reason)
-            self.o.ctx.done.add("card_given")
-        self.o.run_tasks()
-        self.o.ctx.done.discard("card_given")
-        self.o.ctx.cards_given -= 1
+        o, ctx = self.o, self.o.ctx
+        if not ctx.arm_actions:
+            if self.due is None:
+                delay = o.card_given_delay_s if o.planner.score_track else 0.0
+                self.due = time.monotonic() + delay
+                if delay:
+                    o.status(message=f"card given: the arm moves the score token in {delay:g} s")
+            if time.monotonic() < self.due:
+                return Status.RUNNING
+            score = bot.card_given(points=o.game["traits"]["card_given_points"])
+            ctx.arm_actions.append(o.score_action(score.points, score.reason))
+            ctx.cards_given -= 1
+        o.run_arm_actions()
+        o.status(message="")
         return Status.SUCCESS
 
 
@@ -390,9 +470,9 @@ class Birdsong(Step):
     def step(self) -> Status:
         if "birdsong" not in self.o.ctx.done:
             score = bot.birdsong(self.o.ctx.state, **self.o.game["birdsong"])
-            self.o.add_score(score.points, score.reason)
+            self.o.ctx.arm_actions.append(self.o.score_action(score.points, score.reason))
             self.o.ctx.done.add("birdsong")
-        self.o.run_tasks()
+        self.o.run_arm_actions()
         return Status.SUCCESS
 
 
@@ -421,7 +501,7 @@ class Battles(Step):
             ctx.battles, ctx.battle_index = bot.battles(state, o.card()), 0
             ctx.removals = []
             ctx.done.add("battles")
-        o.run_tasks()
+        o.run_arm_actions()
         while ctx.battle_index < len(ctx.battles):
             battle = ctx.battles[ctx.battle_index]
             if not ctx.dice:
@@ -432,19 +512,17 @@ class Battles(Step):
             result = bot.resolve_battle(
                 state, battle, dice.rolls, vagabond_swords=dice.vagabond_swords
             )
-            ctx.tasks += o.planner.remove(battle.clearing, result.bot_warriors_lost)
+            ctx.arm_actions.append(o.losses_action(battle, result))
             ctx.dice.pop(0)
             log.info(f"battle in clearing {battle.clearing}: {result}")
-            state.add_warriors(battle.clearing, -result.bot_warriors_lost)
             hits = result.defender_hits
             message = f"{battle.defender.value}: remove {hits} in clearing {battle.clearing}"
             if result.keep_lost:
-                state.keep_clearing = None
                 message += "; remove the Keep"  # тимчасово: AUT-8
             ctx.removals.append(message)
             o.status(step="daylight: battle", waiting_for=None)
             ctx.battle_index += 1
-            o.run_tasks()
+            o.run_arm_actions()
         return Status.SUCCESS
 
 
@@ -489,38 +567,37 @@ class Rescan(Step):
 
 class Moves(Step):
     def step(self) -> Status:
-        o, state = self.o, self.o.ctx.state
+        o = self.o
         if "moves" not in o.ctx.done:
-            o.ctx.actions = list(bot.moves(state, o.card(), **o.game["move"]))
+            o.ctx.actions = list(bot.moves(o.ctx.state, o.card(), **o.game["move"]))
             o.ctx.done.add("moves")
+        o.status(step="daylight: move", waiting_for=None)
+        o.run_arm_actions()
         while o.ctx.actions:
             move = o.ctx.actions[0]
             log.info(f"{move}")
-            o.ctx.tasks += o.planner.move(move)
-            state.add_warriors(move.src, -move.count)
-            state.add_warriors(move.dst, move.count)
+            o.ctx.arm_actions.append(o.move_action(move))
             o.ctx.actions.pop(0)
-        o.status(step="daylight: move", waiting_for=None)
-        o.run_tasks()
+            o.run_arm_actions()
         return Status.SUCCESS
 
 
 class Recruits(Step):
     def step(self) -> Status:
-        o, state = self.o, self.o.ctx.state
+        o = self.o
         if "recruits" not in o.ctx.done:
-            recruits = bot.recruits(state, o.card(), **o.game["recruit"])
+            recruits = bot.recruits(o.ctx.state, o.card(), **o.game["recruit"])
             o.ctx.restart_day = recruits is None  # карта без вартості крафту
             o.ctx.actions = list(recruits or [])
             o.ctx.done.add("recruits")
+        o.status(step="daylight: recruit", waiting_for=None)
+        o.run_arm_actions()
         while o.ctx.actions:
             recruit = o.ctx.actions[0]
             log.info(f"{recruit}")
-            o.ctx.tasks += o.planner.recruit(recruit)
-            state.add_warriors(recruit.clearing, recruit.count)
+            o.ctx.arm_actions.append(o.recruit_action(recruit))
             o.ctx.actions.pop(0)
-        o.status(step="daylight: recruit", waiting_for=None)
-        o.run_tasks()
+            o.run_arm_actions()
         return Status.SUCCESS
 
 
@@ -534,6 +611,9 @@ class Evening(Step):
 
 
 class FinishTurn(Step):
+    """Рука в home; лише після успіху хід завершено. Невдача — повтор, потім людина, а не новий
+    хід."""
+
     def step(self) -> Status:
         self.o.arm.home()
         self.o.ctx.in_turn = self.o.ctx.turn_requested = False
@@ -543,12 +623,13 @@ class FinishTurn(Step):
 
 
 class AbortTurn(Step):
-    """Хід не вдався без повтору (кінець гри): рука в home, невиконані переміщення забуто, хід
-    завершено."""
+    """Хід дав FAILURE: хтось набрав game.win_points ПО (NobodyWon) або впав крок без повтору
+    (StartTurn, WaitOrderCard). Рука в home (збій руки — лише в лозі й статусі), незавершені дії
+    забуто, хід завершено."""
 
     def step(self) -> Status:
-        self.o.arm.home()
-        self.o.drop_tasks()
+        self.o.home_or_report()
+        self.o.drop_arm_actions()
         self.o.ctx.in_turn = self.o.ctx.turn_requested = False
         if not self.o.ctx.game_over:
             log.error(f"bot turn aborted: {self.o.ctx.error}")
@@ -603,7 +684,7 @@ class RetryOrAskHuman(py_trees.decorators.Decorator):
             log.warning(f"{self.decorated.name}: 🟡 retry {self.failures}/{self.o.step_retries}")
             return Status.RUNNING
         log.error(f"{self.decorated.name}: 🔴 needs help, waiting for «bot turn» to continue")
-        self.o.arm.home()
+        self.o.home_or_report()
         self.o.ctx.resume, self.waiting = False, True
         self.o.wait_for(
             WaitingFor.YOUR_TURN, f"needs help: {self.decorated.name}", error=self.o.ctx.error

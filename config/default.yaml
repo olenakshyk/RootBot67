@@ -103,6 +103,7 @@ logging:
 orchestrator:
   tick_period_s: 0.1         # how often the Behaviour Tree is ticked
   step_retries: 3            # a failed turn step is repeated this many times, then the bot waits for a human
+  card_given_delay_s: 4      # after "card given" the arm waits this long before moving the score token
 
 startup:
   retries: 3                 # how many times to retry a transient error

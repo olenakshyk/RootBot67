@@ -27,9 +27,13 @@ class Fakes:
         self.observations = observations
         self.missing: list = []  # що add_frames по черзі каже «ще не видно»; порожньо — видно все
         self.moves_to_fail = 0
+        self.homes_to_fail = 0
 
     # Arm
     def home(self) -> None:
+        if self.homes_to_fail:
+            self.homes_to_fail -= 1
+            raise RuntimeError("arm stuck")
         self.calls.append("home")
 
     # Scanner
@@ -95,6 +99,7 @@ def obs(pieces, scores=None) -> BoardObservation:
 def make(observations, **game):
     cfg = load_config()
     cfg["orchestrator"]["tick_period_s"] = 0
+    cfg["orchestrator"]["card_given_delay_s"] = 0
     cfg["game"].update(game)
     board = load_board(AUTUMN)
     fakes = Fakes(observations)
@@ -307,34 +312,147 @@ def test_clearing_still_unknown_after_scan_waits_for_human():
     assert not any(c.startswith("move") for c in fakes.calls)
 
 
-def test_failed_arm_move_keeps_goal_until_retry_succeeds():
+def test_failed_arm_move_changes_nothing_until_retry_succeeds():
     alone = obs({C(1): {BOT: PieceCounts(warriors=5)}})
     o, fakes, server = make([alone])
+    state = o.ctx.state
+    state.update(pieces=alone.pieces, keep_clearing=None, scores={})
     o.planner.process(alone, [C(1), C(2)])
-    o.ctx.tasks = o.planner.move(Move(C(1), C(2), 2))
+    o.ctx.arm_actions = [o.move_action(Move(C(1), C(2), 2))]
+    tasks = list(o.ctx.arm_actions[0].tasks)
     before = {c: list(points) for c, points in o.planner.bot_positions.items()}
     fakes.moves_to_fail = 1
     with pytest.raises(RuntimeError):
-        o.run_tasks()
+        o.run_arm_actions()
     assert o.planner.bot_positions == before
-    assert o.planner.goals == o.ctx.tasks and len(o.ctx.tasks) == 2
+    assert o.planner.goals == tasks
+    assert state.counts(C(1), BOT).warriors == 5 and state.counts(C(2), BOT).warriors == 0
 
-    tasks = list(o.ctx.tasks)
-    o.run_tasks()
-    assert o.planner.goals == [] and o.ctx.tasks == []
+    o.run_arm_actions()
+    o.run_arm_actions()
+    assert o.planner.goals == [] and o.ctx.arm_actions == []
     assert o.planner.bot_positions[C(1)] == alone.positions[C(1)][BOT][2:]
     assert o.planner.bot_positions[C(2)] == [task.target for task in tasks]
+    assert state.counts(C(1), BOT).warriors == 3 and state.counts(C(2), BOT).warriors == 2
 
 
-def test_aborted_turn_drops_pending_tasks():
+def test_game_end_drops_unfinished_arm_actions():
+    alone = obs({C(1): {BOT: PieceCounts(warriors=5)}})
+    o, fakes, server = make([alone])
+    fakes.moves_to_fail = 100
+    tick_until(o, waiting(server, WaitingFor.YOUR_TURN))
+    server.your_turn()
+    tick_until(o, waiting(server, WaitingFor.ORDER_CARD))
+    server.order_card(FOX_1)
+    tick_until(o, lambda: server.current_state().step.startswith("needs help"))
+    assert o.ctx.arm_actions
+
+    server.end_game()
+    o.run()
+    assert o.ctx.arm_actions == [] and o.planner.goals == []
+    assert o.ctx.state.counts(C(1), BOT).warriors == 5
+
+
+TRACK = [BoardPoint(0, i) for i in range(31)]
+
+
+class Clock:
+    def __init__(self) -> None:
+        self.now = 0.0
+
+    def monotonic(self) -> float:
+        return self.now
+
+    def sleep(self, seconds: float) -> None:
+        self.now += seconds
+
+
+def test_card_given_moves_the_token_after_the_delay_then_scores(monkeypatch):
+    clock = Clock()
+    monkeypatch.setattr("rootbot.app.orchestrator.time", clock)
+    o, fakes, server = make([BEFORE_BATTLE])
+    o.planner.score_track, o.card_given_delay_s = TRACK, 4
+    tick_until(o, waiting(server, WaitingFor.YOUR_TURN))
+    server.card_given()
+    for _ in range(3):
+        o.tree.tick()
+    assert fakes.calls == []
+    assert o.ctx.state.scores.get(BOT, 0) == 0
+    assert server.current_state().message == "card given: the arm moves the score token in 4 s"
+
+    clock.now = 4.0
+    o.tree.tick()
+    assert fakes.calls == [f"move {TRACK[0]} -> {TRACK[1]}"]
+    assert o.ctx.state.scores[BOT] == 1
+    assert o.ctx.cards_given == 0
+
+
+def test_failed_token_move_waits_for_human_and_scores_once():
+    o, fakes, server = make([BEFORE_BATTLE])
+    o.planner.score_track = TRACK
+    fakes.moves_to_fail = o.step_retries + 1
+    tick_until(o, waiting(server, WaitingFor.YOUR_TURN))
+    server.card_given()
+    tick_until(o, lambda: server.current_state().step.startswith("needs help"))
+    assert server.current_state().error is not None
+    assert o.ctx.state.scores.get(BOT, 0) == 0
+
+    server.your_turn()
+    tick_until(o, lambda: not o.ctx.arm_actions)
+    for _ in range(5):
+        o.tree.tick()
+    assert o.ctx.state.scores[BOT] == 1
+    assert fakes.calls.count(f"move {TRACK[0]} -> {TRACK[1]}") == 1
+    assert not o.ctx.turn_requested and not o.ctx.in_turn
+
+
+def test_card_given_without_score_track_scores_at_once():
+    o, fakes, server = make([BEFORE_BATTLE])
+    o.card_given_delay_s = 4
+    tick_until(o, waiting(server, WaitingFor.YOUR_TURN))
+    server.card_given()
+    o.tree.tick()
+    assert o.ctx.state.scores[BOT] == 1
+    assert not any(c.startswith("move") for c in fakes.calls)
+
+
+def test_failed_home_at_turn_end_waits_for_human_without_new_turn():
+    alone = obs({C(1): {BOT: PieceCounts(warriors=5)}})
+    o, fakes, server = make([alone])
+    fakes.homes_to_fail = 100
+    tick_until(o, waiting(server, WaitingFor.YOUR_TURN))
+    server.your_turn()
+    tick_until(o, waiting(server, WaitingFor.ORDER_CARD))
+    server.order_card(FOX_1)
+    tick_until(o, lambda: server.current_state().step == "needs help: FinishTurn")
+    score = o.ctx.state.scores[BOT]
+    for _ in range(5):
+        o.tree.tick()
+
+    status = server.current_state()
+    assert status.waiting_for == WaitingFor.YOUR_TURN
+    assert "arm home failed" in status.error
+    assert o.ctx.in_turn and fakes.calls.count("scan") == 1
+    assert o.ctx.state.scores[BOT] == score
+
+    fakes.homes_to_fail = 0
+    server.your_turn()
+    tick_until(o, lambda: not o.ctx.in_turn)
+    for _ in range(5):
+        o.tree.tick()
+    assert fakes.calls.count("scan") == 1
+    assert o.ctx.state.scores[BOT] == score
+
+
+def test_failed_home_in_abort_turn_is_reported():
     o, fakes, server = make([obs({}, scores={EYRIE: 30})])
-    o.planner.score_track = [BoardPoint(0, i) for i in range(31)]
-    o.ctx.tasks = o.planner.score(0, 1)
+    fakes.homes_to_fail = 1
     tick_until(o, waiting(server, WaitingFor.YOUR_TURN))
     server.your_turn()
     tick_until(o, lambda: o.ctx.game_over)
-    assert o.ctx.tasks == [] and o.planner.goals == []
-    assert not any(c.startswith("move") for c in fakes.calls)
+    o.run()
+    assert not o.ctx.in_turn
+    assert "arm home failed: arm stuck" in server.current_state().error
 
 
 def test_card_given_scores_when_idle():
