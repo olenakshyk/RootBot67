@@ -5,7 +5,8 @@ from pathlib import Path
 
 import pytest
 
-from rootbot.app.move_planner import ClearingNeedsScan, MovePlanner
+from rootbot.app.move_planner import ClearingNeedsScan, MovePlanner, create_move_planner
+from rootbot.common.errors import FatalError
 from rootbot.common.types import BoardPoint, ClearingId, Faction
 from rootbot.game.actions import Move, Recruit
 from rootbot.game.board import load_board
@@ -179,3 +180,27 @@ def test_taken_place_becomes_free():
 
 def test_recruit_comes_from_supply():
     assert planner({C1: {}}).recruit(Recruit(C1, 1))[0].source == SUPPLY
+
+
+def config(score_track):
+    board = {"size_mm": list(BOARD_MM), "piece_spacing_mm": SPACING, "score_track_mm": score_track}
+    return {"board": board, "game": {"win_points": 30}}
+
+
+@pytest.mark.parametrize("score_track", [[], None])
+def test_no_score_track_leaves_token_in_place(score_track):
+    p = create_move_planner(config(score_track), load_board(AUTUMN))
+    assert p.score(3, 5) == []
+
+
+def test_full_score_track_moves_token():
+    track = [[10.0 * i, 400.0] for i in range(31)]
+    p = create_move_planner(config(track), load_board(AUTUMN))
+    task = p.score(3, 5)[0]
+    assert (task.source, task.target) == (BoardPoint(30, 400), BoardPoint(50, 400))
+
+
+def test_short_score_track_is_fatal():
+    track = [[10.0 * i, 400.0] for i in range(20)]
+    with pytest.raises(FatalError):
+        create_move_planner(config(track), load_board(AUTUMN))

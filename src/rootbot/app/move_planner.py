@@ -21,6 +21,9 @@
 огляд — ClearingNeedsScan: Orchestrator оглядає цю галявину й повторює крок. Не знає — це для
 взяття менше відомих місць котів бота, ніж треба взяти, а для постановки — галявина, якої ще не
 покрив жоден огляд і на яку нічого не заплановано.
+
+Доріжка рахунку (board.score_track_mm) порожня — жетон рахунку бота не рухається, з попередженням;
+інакше в ній рівно game.win_points + 1 клітинка (0..win_points).
 """
 
 from __future__ import annotations
@@ -29,7 +32,7 @@ import logging
 import math
 from collections.abc import Iterator
 
-from rootbot.common.errors import TemporaryError
+from rootbot.common.errors import FatalError, TemporaryError
 from rootbot.common.types import BoardPoint, ClearingId
 from rootbot.game.actions import Move, Recruit
 from rootbot.game.board import Board
@@ -59,7 +62,7 @@ class MovePlanner:
     ) -> None:
         self.board = board
         self.board_size_mm = board_size_mm  # ширина, висота дошки, мм
-        self.score_track = score_track  # клітинки доріжки рахунку 0..30, мм дошки
+        self.score_track = score_track  # клітинки доріжки рахунку 0..win_points, мм дошки
         self.spacing_mm = spacing_mm  # мін. відстань між центрами фігурок (фігурка + пальці)
         self.bot_positions: dict[ClearingId, list[BoardPoint]] = {}  # де коти бота
         self.occupied: dict[ClearingId, list[BoardPoint]] = {}  # усі зайняті точки, з Keep
@@ -92,7 +95,7 @@ class MovePlanner:
         return [PieceMoveTask(point, SUPPLY) for point in self._take(clearing, count)]
 
     def score(self, old: int, new: int) -> list[PieceMoveTask]:
-        """Жетон рахунку бота з клітинки old на new (понад 30 — на 30)."""
+        """Жетон рахунку бота з клітинки old на new (понад win_points — на останню клітинку)."""
         if not self.score_track:
             log.warning("board.score_track_mm is not set: the score token is not moved")
             return []
@@ -189,7 +192,16 @@ def _clearance(point: BoardPoint, taken: list[BoardPoint]) -> float:
 
 
 def create_move_planner(cfg: dict, board: Board) -> MovePlanner:
-    track = [BoardPoint(float(x), float(y)) for x, y in cfg["board"].get("score_track_mm", [])]
+    """MovePlanner з config. board.score_track_mm порожній або без значення — жетон рахунку не
+    рухається; інакше рівно game.win_points + 1 точка (клітинки 0..win_points), інша довжина —
+    FatalError."""
+    raw_track = cfg["board"].get("score_track_mm") or []
+    cells = cfg["game"]["win_points"] + 1
+    if raw_track and len(raw_track) != cells:
+        raise FatalError(
+            f"board.score_track_mm: expected {cells} points (0..{cells - 1}), got {len(raw_track)}"
+        )
+    track = [BoardPoint(float(x), float(y)) for x, y in raw_track]
     width, height = cfg["board"]["size_mm"]
     size = (float(width), float(height))
     return MovePlanner(board, size, track, cfg["board"]["piece_spacing_mm"])
