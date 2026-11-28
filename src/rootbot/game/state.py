@@ -1,6 +1,12 @@
-# Стан партії: фігурки на галявинах, Keep, рахунок; панування й вибір захисника.
-# Фігурки щоходу перечитуються з камери, решту (рахунок, Keep) програма пам'ятає сама.
-# Див. docs/game-rules.md.
+"""Стан партії: фігурки на галявинах, Keep, рахунок; панування й вибір захисника.
+
+Фігурки й Keep щоходу перечитуються з камери на побачених галявинах;
+рахунок бота програма веде сама.
+Правила гри: docs/game-rules.md.
+
+Зовнішній опис: docs/architecture.md -> Модулі -> game -> state.
+"""
+
 from __future__ import annotations
 
 from dataclasses import dataclass, field, fields, replace
@@ -40,19 +46,27 @@ class GameState:
         """Новий огляд з камери. Камера — джерело істини, програма пам'ятає лише невидиме:
         - фігурки — з камери, лише для галявин, які огляд побачив (і лише `clearings`, якщо
           задано); галявини, яких камера не бачила, лишаються як були;
-        - Keep — з камери, а якщо не видно, лишається попередній;
+        - Keep — за побаченими галявинами: огляд бачить Keep на галявині → Keep там; огляд бачить
+          галявину з Keep без нього → Keep знищено (None); галявина з Keep поза оглядом → Keep
+          лишається попереднім;
         - рахунки людей — з камери, свій рахунок бот веде сам.
+        Новий стан спершу перевіряється: суперечливий огляд кидає GameStateError, і стан
+        лишається попереднім.
         """
         fresh = copy_pieces(pieces)
-        for clearing in fresh if clearings is None else clearings:
-            if clearing in fresh:
-                self.pieces[clearing] = fresh[clearing]
-        if keep_clearing is not None:
-            self.keep_clearing = keep_clearing
-        self.scores = {f: s for f, s in scores.items() if f != BOT} | {BOT: self.scores.get(BOT, 0)}
-        errors = self._validate()
-        if errors:
-            raise GameStateError("invalid game state:\n  " + "\n  ".join(errors))
+        seen = [c for c in fresh if clearings is None or c in clearings]
+        keep = self.keep_clearing
+        if keep_clearing in seen:
+            keep = keep_clearing
+        elif keep in seen:
+            keep = None
+        new = replace(
+            self,
+            pieces=self.pieces | {c: fresh[c] for c in seen},
+            keep_clearing=keep,
+            scores={f: s for f, s in scores.items() if f != BOT} | {BOT: self.scores.get(BOT, 0)},
+        )
+        self.pieces, self.keep_clearing, self.scores = new.pieces, new.keep_clearing, new.scores
 
     def counts(self, clearing: ClearingId, faction: Faction) -> PieceCounts:
         """Фігурки фракції на галявині (нулі, якщо їх там немає)."""
@@ -94,9 +108,20 @@ class GameState:
         )
 
     def add_warriors(self, clearing: ClearingId, count: int, faction: Faction = BOT) -> None:
-        """Додати (або зняти, якщо count < 0) воїнів фракції на галявині; менше нуля не буває."""
+        """Додати (або зняти, якщо count < 0) воїнів фракції на галявині.
+        Кидає GameStateError, якщо галявини немає на мапі або воїнів менше, ніж треба зняти."""
+        if clearing not in self.board.clearings:
+            raise GameStateError(
+                f"add_warriors: unknown clearing {clearing} ({faction.value}, change {count})"
+            )
+        current = self.counts(clearing, faction).warriors
+        if current + count < 0:
+            raise GameStateError(
+                f"add_warriors: clearing {clearing} has {current} {faction.value} warriors,"
+                f" cannot change by {count}"
+            )
         here = self.pieces.setdefault(clearing, {}).setdefault(faction, PieceCounts())
-        here.warriors = max(here.warriors + count, 0)
+        here.warriors = current + count
 
     def clearings_with(self, faction: Faction, *, warriors_only: bool = False) -> list[ClearingId]:
         """Галявини, де фракція має хоч одну фігурку (чи воїна), у порядку пріоритету."""

@@ -68,7 +68,7 @@ def _config(tmp_path, **overrides):
 
 def test_main_starts_with_mocks(tmp_path, monkeypatch):
     def server_with_end_game(cfg):
-        server = OperatorServer()
+        server = OperatorServer(die_max=cfg["game"]["die_max"])
         server.end_game()  # інакше Orchestrator чекав би сигналів вічно
         return server
 

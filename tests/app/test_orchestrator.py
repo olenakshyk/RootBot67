@@ -5,7 +5,7 @@ from pathlib import Path
 import pytest
 
 from rootbot.app.move_planner import MovePlanner
-from rootbot.app.operator_ui import OperatorServer
+from rootbot.app.operator_ui import OperatorServer, WaitingFor
 from rootbot.app.orchestrator import Orchestrator
 from rootbot.common.types import BoardPoint, ClearingId, Faction, OrderCard, PieceCounts, Suit
 from rootbot.config import load_config
@@ -63,8 +63,27 @@ class Fakes:
         self.calls.append(f"move {task.source} -> {task.target}")
 
 
+BOARD = load_board(AUTUMN)
+BOT_SPACING_MM = 40
+
+
+def bot_positions(pieces):
+    return {
+        c: {
+            BOT: [
+                BoardPoint(BOARD[c].center.x + BOT_SPACING_MM * i, BOARD[c].center.y)
+                for i in range(counts[BOT].warriors)
+            ]
+        }
+        for c, counts in pieces.items()
+        if BOT in counts
+    }
+
+
 def obs(pieces, scores=None) -> BoardObservation:
-    return BoardObservation(pieces=pieces, scores=scores or {}, confidence=1.0)
+    return BoardObservation(
+        pieces=pieces, positions=bot_positions(pieces), scores=scores or {}, confidence=1.0
+    )
 
 
 def make(observations, **game):
@@ -73,13 +92,13 @@ def make(observations, **game):
     cfg["game"].update(game)
     board = load_board(AUTUMN)
     fakes = Fakes(observations)
-    server = OperatorServer()
+    server = OperatorServer(die_max=cfg["game"]["die_max"])
     o = Orchestrator(
         arm=fakes,
         scanner=fakes,
         detector=fakes,
         board=board,
-        planner=MovePlanner(board, [], spacing_mm=30),
+        planner=MovePlanner(board, tuple(cfg["board"]["size_mm"]), [], spacing_mm=30),
         manipulator=fakes,
         server=server,
         cfg=cfg,
@@ -115,17 +134,18 @@ def center(o, c):
 
 def test_full_turn_order():
     o, fakes, server = make([BEFORE_BATTLE, AFTER_BATTLE])
-    tick_until(o, waiting(server, "your_turn"))
+    tick_until(o, waiting(server, WaitingFor.YOUR_TURN))
     server.your_turn()
-    tick_until(o, waiting(server, "order_card"))
+    tick_until(o, waiting(server, WaitingFor.ORDER_CARD))
     assert o.ctx.state.scores[BOT] == 2  # Світанок: панує на 1 з 5 воїнами
 
     server.order_card(FOX_1)
-    tick_until(o, waiting(server, "dice"))
+    tick_until(o, waiting(server, WaitingFor.DICE))
     server.dice_rolled((3, 0))  # бот 3 влучання, Династія 0
-    tick_until(o, waiting(server, "your_turn"))
+    tick_until(o, waiting(server, WaitingFor.YOUR_TURN))
 
     c1, c2 = center(o, 1), center(o, 2)
+    p0, p1 = AFTER_BATTLE.positions[C(1)][BOT][:2]
     moves = [c for c in fakes.calls if c.startswith("move")]
     assert fakes.calls[:6] == [
         "scan",
@@ -135,8 +155,9 @@ def test_full_turn_order():
         "add",
         "detect",
     ]  # + огляд після бою
-    assert moves[0] == f"move {c1} -> {c2}"  # рух: 5 - 3 воїни до ворогів; перший — у центр
-    assert moves[1].startswith(f"move {c1} -> ") and moves[1] != moves[0]  # другий — поруч
+    assert moves[0] == f"move {p0} -> {c2}"  # рух: 5 - 3 воїни до ворогів; перший — у центр
+    assert moves[1].startswith(f"move {p1} -> ")
+    assert moves[1] != f"move {p1} -> {c2}"  # другий — поруч
     assert moves[2] == f"move {SUPPLY} -> {c1}"  # набір: 1 на лисячу галявину
     assert fakes.calls[-1] == "home"
     state = o.ctx.state
@@ -146,23 +167,29 @@ def test_full_turn_order():
 
 def test_day_restarts_on_card_without_craft_cost():
     o, fakes, server = make([BEFORE_BATTLE, AFTER_BATTLE])
+    tick_until(o, waiting(server, WaitingFor.YOUR_TURN))
     server.your_turn()
-    tick_until(o, waiting(server, "order_card"))
+    tick_until(o, waiting(server, WaitingFor.ORDER_CARD))
     server.order_card(OrderCard(Suit.MOUSE, ()))  # без вартості крафту, боїв на мишачих немає
     tick_until(
-        o, lambda: o.ctx.cards_used == 1 and server.current_state().waiting_for == "order_card"
+        o,
+        lambda: (
+            o.ctx.cards_used == 1 and server.current_state().waiting_for == WaitingFor.ORDER_CARD
+        ),
     )
     server.order_card(OrderCard(Suit.RABBIT, (Suit.RABBIT,)))
-    tick_until(o, waiting(server, "your_turn"))
+    tick_until(o, waiting(server, WaitingFor.YOUR_TURN))
     assert o.ctx.cards_used == 2
 
 
 def test_failed_step_retries_then_waits_for_human():
-    o, fakes, server = make([obs({C(1): {BOT: PieceCounts(warriors=5)}})])
+    alone = obs({C(1): {BOT: PieceCounts(warriors=5)}})
+    o, fakes, server = make([alone])
     retries = o.step_retries
     fakes.moves_to_fail = retries + 1  # усі спроби + ще одна
+    tick_until(o, waiting(server, WaitingFor.YOUR_TURN))
     server.your_turn()
-    tick_until(o, waiting(server, "order_card"))
+    tick_until(o, waiting(server, WaitingFor.ORDER_CARD))
     server.order_card(FOX_1)
     tick_until(o, lambda: server.current_state().step.startswith("needs help"))
     assert server.current_state().error is not None
@@ -173,13 +200,14 @@ def test_failed_step_retries_then_waits_for_human():
     fakes.moves_to_fail = 0
     server.your_turn()  # людина допомогла
     tick_until(o, lambda: not o.ctx.in_turn)
-    c1 = center(o, 1)
-    moved = [c for c in fakes.calls if c.startswith(f"move {c1} -> ")]
+    from_c1 = tuple(f"move {p} -> " for p in alone.positions[C(1)][BOT])
+    moved = [c for c in fakes.calls if c.startswith(from_c1)]
     assert len(moved) == 2  # жодне переміщення не повторилось двічі
 
 
 def test_card_given_scores_when_idle():
     o, fakes, server = make([BEFORE_BATTLE])
+    tick_until(o, waiting(server, WaitingFor.YOUR_TURN))
     server.card_given()
     tick_until(o, lambda: o.ctx.cards_given == 0)
     assert o.ctx.state.scores[BOT] == 1
@@ -187,6 +215,7 @@ def test_card_given_scores_when_idle():
 
 def test_win_points_end_the_game():
     o, fakes, server = make([obs({}, scores={EYRIE: 30})])
+    tick_until(o, waiting(server, WaitingFor.YOUR_TURN))
     server.your_turn()
     tick_until(o, lambda: o.ctx.game_over)
     assert fakes.calls[-1] == "home"
@@ -203,6 +232,7 @@ def test_end_game_signal_stops_run():
 def test_score_token_is_moved(track):
     o, fakes, server = make([BEFORE_BATTLE])
     o.planner.score_track = track
+    tick_until(o, waiting(server, WaitingFor.YOUR_TURN))
     server.card_given()
     tick_until(o, lambda: o.ctx.cards_given == 0)
     assert fakes.calls == [f"move {track[0]} -> {track[1]}"]

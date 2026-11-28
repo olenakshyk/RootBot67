@@ -5,7 +5,4 @@ board_to_robot:
   translation_mm: [0.0, 0.0]
   table_z_mm: 0.0
   max_residual_mm: 0.0
-  # Board corners in the undistorted camera frame at calibration time (px), in board order
-  # (0, 0), (L, 0), (L, W), (0, W). Vision compares them with each frame to notice a moved board.
-  board_corners_px: [[0, 0], [0, 0], [0, 0], [0, 0]]
   date: "YYYY-MM-DD"

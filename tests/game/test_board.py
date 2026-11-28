@@ -4,8 +4,9 @@ from pathlib import Path
 import pytest
 import yaml
 
+from rootbot.common.errors import FatalError
 from rootbot.common.types import BoardPoint, Suit
-from rootbot.game.board import BoardError, load_board, parse_board
+from rootbot.game.board import BoardError, create_board, load_board, parse_board
 
 AUTUMN = Path(__file__).resolve().parents[2] / "config" / "maps" / "autumn.yaml"
 
@@ -168,3 +169,23 @@ def test_reports_all_errors(data):
         parse_board(data)
     assert "clearing 2" in str(exc.value)
     assert "clearing 3" in str(exc.value)
+
+
+# --- create_board ---
+
+
+def assert_fatal(map_file, message):
+    with pytest.raises(FatalError, match=message) as exc:
+        create_board({"board": {"map_file": str(map_file)}})
+    assert exc.type is FatalError
+
+
+def test_create_board_missing_file(tmp_path):
+    assert_fatal(tmp_path / "missing.yaml", "cannot load the map")
+
+
+def test_create_board_invalid_map(tmp_path, data):
+    clearing(data, 10)["adjacent"].append(42)
+    map_file = tmp_path / "map.yaml"
+    map_file.write_text(yaml.safe_dump(data), encoding="utf-8")
+    assert_fatal(map_file, "unknown clearing 42")

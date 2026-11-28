@@ -25,6 +25,7 @@ from rootbot.app.operator_ui import (
     EndGame,
     OperatorServer,
     OrderCardRevealed,
+    WaitingFor,
     YourTurn,
 )
 from rootbot.common.errors import FatalError
@@ -188,7 +189,7 @@ class Orchestrator:
             log.warning(f"still unsure after {rechecks} rechecks: {recheck}")
         return obs
 
-    def wait_for(self, what: str, step: str, **changes: object) -> None:
+    def wait_for(self, what: WaitingFor, step: str, **changes: object) -> None:
         """Статус «чекаю людину»: що саме потрібно (what) і на якому кроці. Лише якщо змінилося."""
         now = self.server.current_state()
         if now.waiting_for != what or now.step != step:
@@ -275,7 +276,7 @@ class ReadSignals(Step):
 
 class Idle(Step):
     def step(self) -> Status:
-        self.o.wait_for("your_turn", "idle")
+        self.o.wait_for(WaitingFor.YOUR_TURN, "idle")
         return Status.RUNNING
 
 
@@ -336,7 +337,7 @@ class WaitOrderCard(Step):
     def step(self) -> Status:
         ctx = self.o.ctx
         if not ctx.order_cards:
-            self.o.wait_for("order_card", "daylight: reveal the left order card")
+            self.o.wait_for(WaitingFor.ORDER_CARD, "daylight: reveal the left order card")
             return Status.RUNNING
         ctx.card = ctx.order_cards.pop(0)
         ctx.cards_used += 1
@@ -361,7 +362,7 @@ class Battles(Step):
             battle = ctx.battles[ctx.battle_index]
             if not ctx.dice:
                 where = f"battle in clearing {battle.clearing} vs {battle.defender.value}"
-                o.wait_for("dice", f"{where}: roll the dice")
+                o.wait_for(WaitingFor.DICE, f"{where}: roll the dice")
                 return Status.RUNNING
             dice = ctx.dice.pop(0)
             result = bot.resolve_battle(
@@ -446,7 +447,7 @@ class FinishTurn(Step):
         self.o.arm.home()
         self.o.ctx.in_turn = self.o.ctx.turn_requested = False
         log.info(f"=== bot turn done, score {self.o.ctx.state.scores.get(BOT, 0)} ===")
-        self.o.status(step="idle", waiting_for="your_turn")
+        self.o.status(step="idle", waiting_for=WaitingFor.YOUR_TURN)
         return Status.SUCCESS
 
 
@@ -458,7 +459,9 @@ class AbortTurn(Step):
         self.o.ctx.in_turn = self.o.ctx.turn_requested = False
         if not self.o.ctx.game_over:
             log.error(f"bot turn aborted: {self.o.ctx.error}")
-            self.o.status(step="turn aborted", waiting_for="your_turn", error=self.o.ctx.error)
+            self.o.status(
+                step="turn aborted", waiting_for=WaitingFor.YOUR_TURN, error=self.o.ctx.error
+            )
         return Status.SUCCESS
 
 
@@ -509,7 +512,9 @@ class RetryOrAskHuman(py_trees.decorators.Decorator):
         log.error(f"{self.decorated.name}: 🔴 needs help, waiting for «bot turn» to continue")
         self.o.arm.home()
         self.o.ctx.resume, self.waiting = False, True
-        self.o.wait_for("your_turn", f"needs help: {self.decorated.name}", error=self.o.ctx.error)
+        self.o.wait_for(
+            WaitingFor.YOUR_TURN, f"needs help: {self.decorated.name}", error=self.o.ctx.error
+        )
         return Status.RUNNING
 
     def terminate(self, new_status: Status) -> None:
