@@ -19,9 +19,22 @@ SPACING = 30
 BOARD_MM = (570.0, 440.0)
 
 
+def observation(positions, keeps=None):
+    """Огляд, де occupied — усі фігурки з positions і точки Keep з keeps."""
+    keeps = keeps or {}
+    clearings = set(positions) | set(keeps)
+    occupied = {
+        c: [q for points in positions.get(c, {}).values() for q in points] + keeps.get(c, [])
+        for c in clearings
+    }
+    return BoardObservation(
+        positions={c: positions.get(c, {}) for c in clearings}, occupied=occupied
+    )
+
+
 def planner(positions=None):
     p = MovePlanner(load_board(AUTUMN), BOARD_MM, [], spacing_mm=SPACING)
-    p.process(BoardObservation(positions=positions or {}))
+    p.process(observation(positions or {}))
     return p
 
 
@@ -38,7 +51,7 @@ def test_takes_known_bot_positions_first():
 def test_full_scan_keeps_unseen_clearings():
     old_c1, old_c2, new_c2 = BoardPoint(50, 50), BoardPoint(310, 40), BoardPoint(320, 45)
     p = planner({C1: {BOT: [old_c1]}, C2: {BOT: [old_c2]}})
-    p.process(BoardObservation(positions={C2: {BOT: [new_c2]}}))
+    p.process(observation({C2: {BOT: [new_c2]}}))
     assert p.remove(C1, 1)[0].source == old_c1
     assert p.remove(C2, 1)[0].source == new_c2
 
@@ -46,7 +59,7 @@ def test_full_scan_keeps_unseen_clearings():
 def test_full_scan_keeps_planned_spots_of_unseen_clearings():
     p = planner()
     placed = p.recruit(Recruit(C1, 1))[0].target
-    p.process(BoardObservation(positions={C2: {}}))
+    p.process(observation({C2: {}}))
     assert p.remove(C1, 1)[0].source == placed
 
 
@@ -61,9 +74,25 @@ def test_take_without_known_position_raises():
 def test_free_spot_avoids_other_pieces():
     p = planner()
     center = p.board[C2].center
-    p.process(BoardObservation(positions={C2: {Faction.EYRIE: [center]}}))
+    p.process(observation({C2: {Faction.EYRIE: [center]}}))
     spot = p.free_spot(C2)
     assert spot != center and far_enough(spot, [center])
+
+
+def test_free_spot_avoids_keep():
+    p = planner()
+    keep = p.board[C2].center
+    p.process(observation({C2: {}}, keeps={C2: [keep]}))
+    targets = [t.target for t in p.recruit(Recruit(C2, 3))]
+    assert all(far_enough(t, [keep]) for t in targets)
+
+
+def test_free_spot_avoids_enemy_and_keep():
+    p = planner()
+    c = p.board[C2].center
+    keep, enemy = BoardPoint(c.x + 10, c.y), BoardPoint(c.x - 15, c.y + 10)
+    p.process(observation({C2: {Faction.EYRIE: [enemy]}}, keeps={C2: [keep]}))
+    assert far_enough(p.free_spot(C2), [keep, enemy])
 
 
 def clearance(point, others):
@@ -85,7 +114,7 @@ def test_packed_clearing_gives_spot_just_outside_it():
     p = planner()
     c = p.board[C2]
     pieces = packed(c.center, c.radius_mm)
-    p.process(BoardObservation(positions={C2: {Faction.EYRIE: pieces}}))
+    p.process(observation({C2: {Faction.EYRIE: pieces}}))
     spot = p.free_spot(C2)
     own = math.dist((spot.x, spot.y), (c.center.x, c.center.y))
     assert own > c.radius_mm and far_enough(spot, pieces)
@@ -99,7 +128,7 @@ def test_packed_surroundings_give_least_crowded_spot():
     p = planner()
     c = p.board[C2]
     pieces = packed(c.center, 200)
-    p.process(BoardObservation(positions={C2: {Faction.EYRIE: pieces}}))
+    p.process(observation({C2: {Faction.EYRIE: pieces}}))
     spot = p.free_spot(C2)
     assert spot != c.center
     assert clearance(c.center, pieces) < clearance(spot, pieces) < SPACING
