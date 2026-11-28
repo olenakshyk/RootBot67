@@ -5,7 +5,7 @@ import yaml
 
 from rootbot.common.types import ClearingId
 from rootbot.robot.scan import Scanner
-from rootbot.vision.observation import RecheckRequest
+from rootbot.vision.observation import RecheckReason, RecheckRequest
 
 
 class FakeCamera:
@@ -21,7 +21,7 @@ class FakeArm:
 def test_frames_are_saved_in_debug(tmp_path):
     scanner = Scanner(FakeArm(), FakeCamera(), scan_poses=[[0], [1]], frames_dir=tmp_path)
     scanner.scan()
-    scanner.scan(RecheckRequest([ClearingId(5)], "disagree"))
+    scanner.scan(RecheckRequest([ClearingId(5)], [RecheckReason.DISAGREE]))
     names = sorted(p.name for p in tmp_path.iterdir())
     assert names == [
         "scan_001.yaml",
@@ -31,7 +31,7 @@ def test_frames_are_saved_in_debug(tmp_path):
         "scan_002_frame_0.jpg",
     ]
     meta = yaml.safe_load((tmp_path / "scan_002.yaml").read_text())
-    assert (meta["reason"], meta["clearings"], meta["frames"]) == ("disagree", [5], 1)
+    assert (meta["reasons"], meta["clearings"], meta["frames"]) == (["disagree"], [5], 1)
 
 
 def test_nothing_is_saved_without_frames_dir(tmp_path):
