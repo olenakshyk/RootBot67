@@ -158,16 +158,20 @@ sequenceDiagram
     App->>Vis: read_card
     Vis-->>App: OrderCard (оператор підтверджує)
     App->>Game: Daylight(state, card)
-    loop кожна Action
-        alt Battle
-            App->>Op: кубики (RNG або ввести), мечі Бродяги
-            App->>Game: resolve_battle(state, battle, rolls)
-            Game-->>App: BattleResult
-            App->>Op: скільки фігурок зняти захиснику
-            App->>Rob: зняти втрати бота
-        else Move / Recruit
-            App->>Rob: PickPlaceTask × N
-        end
+    loop кожен Battle
+        App->>Op: кубики (RNG або ввести), мечі Бродяги
+        App->>Game: resolve_battle(state, battle, rolls)
+        Game-->>App: BattleResult
+        App->>Rob: зняти втрати бота
+    end
+    opt були бої
+        Rob->>Rob: home
+        App->>Op: що зняти кожній фракції людей
+        Op->>App: зняли, «Хід бота»
+        App->>Vis: огляд галявин боїв
+    end
+    loop кожна Move / Recruit
+        App->>Rob: PickPlaceTask × N
         App->>Vis: перевірка результату
     end
     Rob->>Rob: home

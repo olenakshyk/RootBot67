@@ -119,6 +119,10 @@ def waiting(server, what):
     return lambda: server.current_state().waiting_for == what
 
 
+def removing(server):
+    return lambda: server.current_state().step.startswith("daylight: remove")
+
+
 BEFORE_BATTLE = obs(
     {
         C(1): {BOT: PieceCounts(warriors=5), EYRIE: PieceCounts(warriors=1)},
@@ -143,15 +147,18 @@ def test_full_turn_order():
     server.order_card(FOX_1)
     tick_until(o, waiting(server, WaitingFor.DICE))
     server.dice_rolled((3, 0))  # бот 3 влучання, Династія 0
-    tick_until(o, waiting(server, WaitingFor.YOUR_TURN))
+    tick_until(o, removing(server))
+    server.your_turn()
+    tick_until(o, lambda: not o.ctx.in_turn)
 
     c1, c2 = center(o, 1), center(o, 2)
     p0, p1 = AFTER_BATTLE.positions[C(1)][BOT][:2]
     moves = [c for c in fakes.calls if c.startswith("move")]
-    assert fakes.calls[:6] == [
+    assert fakes.calls[:7] == [
         "scan",
         "add",
         "detect",
+        "home",
         "scan [1]",
         "add",
         "detect",
@@ -206,6 +213,57 @@ def test_failed_step_retries_then_waits_for_human():
     assert len(moved) == 2  # жодне переміщення не повторилось двічі
 
 
+def start_battle(observations):
+    o, fakes, server = make(observations)
+    tick_until(o, waiting(server, WaitingFor.YOUR_TURN))
+    server.your_turn()
+    tick_until(o, waiting(server, WaitingFor.ORDER_CARD))
+    server.order_card(FOX_1)
+    tick_until(o, waiting(server, WaitingFor.DICE))
+    return o, fakes, server
+
+
+def test_battle_losses_wait_for_bot_turn_before_rescan():
+    o, fakes, server = start_battle([BEFORE_BATTLE, AFTER_BATTLE])
+    server.dice_rolled((3, 0))
+    tick_until(o, removing(server))
+    for _ in range(3):
+        o.tree.tick()
+
+    status = server.current_state()
+    assert status.waiting_for == WaitingFor.YOUR_TURN
+    assert status.message == f"{EYRIE.value}: remove 1 in clearing 1"
+    assert fakes.calls[-1] == "home"
+    assert "scan [1]" not in fakes.calls
+
+    server.your_turn()
+    tick_until(o, lambda: not o.ctx.in_turn)
+    assert fakes.calls[fakes.calls.index("home") + 1] == "scan [1]"
+
+
+def test_bot_turn_pressed_before_the_wait_does_not_skip_it():
+    o, fakes, server = start_battle([BEFORE_BATTLE, AFTER_BATTLE])
+    o.ctx.resume = True
+    server.dice_rolled((3, 0))
+    tick_until(o, removing(server))
+    for _ in range(3):
+        o.tree.tick()
+
+    assert removing(server)()
+    assert "scan [1]" not in fakes.calls
+
+
+def test_no_battles_no_wait_for_removals():
+    alone = obs({C(1): {BOT: PieceCounts(warriors=5)}})
+    o, fakes, server = make([alone])
+    tick_until(o, waiting(server, WaitingFor.YOUR_TURN))
+    server.your_turn()
+    tick_until(o, waiting(server, WaitingFor.ORDER_CARD))
+    server.order_card(FOX_1)
+    tick_until(o, lambda: not o.ctx.in_turn)
+    assert fakes.calls.count("home") == 1
+
+
 def test_move_onto_unscanned_clearing_scans_it_and_continues():
     o, fakes, server = make([BEFORE_BATTLE, AFTER_BATTLE])
     tick_until(o, waiting(server, WaitingFor.YOUR_TURN))
@@ -215,7 +273,9 @@ def test_move_onto_unscanned_clearing_scans_it_and_continues():
     server.order_card(FOX_1)
     tick_until(o, waiting(server, WaitingFor.DICE))
     server.dice_rolled((3, 0))
-    tick_until(o, waiting(server, WaitingFor.YOUR_TURN))
+    tick_until(o, removing(server))
+    server.your_turn()
+    tick_until(o, lambda: not o.ctx.in_turn)
 
     c2 = center(o, 2)
     scan = fakes.calls.index("scan [2]")

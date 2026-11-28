@@ -120,6 +120,8 @@ flowchart TD
     waitCard["WaitOrderCard"]:::action
     retryBattles{"↻ N"}:::decorator
     battles["Battles"]:::action
+    retryWaitLosses{"↻ N"}:::decorator
+    waitLosses["WaitLossesRemoved"]:::action
     retryRescan{"↻ N"}:::decorator
     rescan["Rescan"]:::action
     retryMoves{"↻ N"}:::decorator
@@ -129,10 +131,12 @@ flowchart TD
 
     day --- waitCard
     day --- retryBattles
+    day --- retryWaitLosses
     day --- retryRescan
     day --- retryMoves
     day --- retryRecruits
     retryBattles --- battles
+    retryWaitLosses --- waitLosses
     retryRescan --- rescan
     retryMoves --- moves
     retryRecruits --- recruits
@@ -147,6 +151,8 @@ flowchart TD
 - `WaitOrderCard` — чекає карту наказу: людина відкриває ліву карту Розкладу й вводить у застосунку її масть і
   вартість крафту (тимчасово; згодом рука з камерою). Поки карти немає — `RUNNING`.
 - `Battles` — по черзі кожен бій: `RUNNING`, поки людина не введе кубики; втрати бота прибирає рука.
+- `WaitLossesRemoved` — після боїв рука в home, у статусі — що зняти кожній фракції людей; `RUNNING`, поки люди не
+  натиснуть «Хід бота». Без боїв — одразу `SUCCESS`.
 - `Rescan` — огляд лише галявин боїв (втрати людей прибирають люди).
 
 **Позначення (для всіх схем):**

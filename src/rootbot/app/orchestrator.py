@@ -70,6 +70,7 @@ class TurnContext:
     tasks: list[PieceMoveTask] = field(default_factory=list)  # ще не виконані переміщення
     battles: list[Battle] = field(default_factory=list)
     battle_index: int = 0
+    removals: list[str] = field(default_factory=list)
     restart_day: bool = False  # карта без вартості крафту (recruits -> None): День ще раз
     error: str | None = None
 
@@ -131,6 +132,7 @@ class Orchestrator:
             children=[
                 WaitOrderCard(self),
                 retry(Battles(self)),
+                retry(WaitLossesRemoved(self)),
                 retry(Rescan(self)),
                 retry(Moves(self)),
                 retry(Recruits(self)),
@@ -396,6 +398,7 @@ class Battles(Step):
         state = o.ctx.state
         if "battles" not in ctx.done:
             ctx.battles, ctx.battle_index = bot.battles(state, o.card()), 0
+            ctx.removals = []
             ctx.done.add("battles")
         o.run_tasks()
         while ctx.battle_index < len(ctx.battles):
@@ -417,9 +420,38 @@ class Battles(Step):
             if result.keep_lost:
                 state.keep_clearing = None
                 message += "; remove the Keep"  # тимчасово: AUT-8
-            o.status(step="daylight: battle", waiting_for=None, message=message)
+            ctx.removals.append(message)
+            o.status(step="daylight: battle", waiting_for=None)
             ctx.battle_index += 1
             o.run_tasks()
+        return Status.SUCCESS
+
+
+class WaitLossesRemoved(Step):
+    """Після боїв рука вже прибрала втрати бота: рука в home, люди знімають свої втрати з усіх боїв
+    і натискають «Хід бота»; лише тоді Rescan. Без боїв — одразу SUCCESS. «Хід бота», натиснутий
+    раніше в цьому ході, очікування не пропускає."""
+
+    def initialise(self) -> None:
+        self.waiting = False
+
+    def step(self) -> Status:
+        ctx = self.o.ctx
+        if not ctx.battles:
+            return Status.SUCCESS
+        if not self.waiting:
+            self.o.arm.home()
+            ctx.resume, self.waiting = False, True
+            self.o.status(
+                step="daylight: remove your pieces, then press Bot turn",
+                waiting_for=WaitingFor.YOUR_TURN,
+                message="; ".join(ctx.removals),
+            )
+        if not ctx.resume:
+            return Status.RUNNING
+        log.info("losses removed by the humans: rescanning the battle clearings")
+        ctx.resume = False
+        self.o.status(step="daylight: scanning the battle clearings", waiting_for=None, message="")
         return Status.SUCCESS
 
 
