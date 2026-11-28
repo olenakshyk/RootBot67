@@ -98,7 +98,7 @@ game:
 
 logging:
   level: info                # debug | info | warning
-  dir: logs                  # куди писати файли логу
+  dir: logs                  # where to write the log files
 
 orchestrator:
   tick_period_s: 0.1         # how often the Behaviour Tree is ticked
