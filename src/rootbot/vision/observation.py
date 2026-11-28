@@ -20,13 +20,13 @@ from rootbot.vision.board_mask import BoardMask
 @dataclass
 class BoardObservation:
     pieces: dict[ClearingId, dict[Faction, PieceCounts]] = field(default_factory=dict)
-    keep_clearing: ClearingId | None = None  # де Keep (None, якщо не знайдено)
+    # галявина, де розпізнано Keep; None — Keep не знайдено або його галявину видно цілком без нього
+    keep_clearing: ClearingId | None = None
     # де стоїть кожна фігурка: точка основи в мм дошки (вільні місця з цього рахує MovePlanner)
     positions: dict[ClearingId, dict[Faction, list[BoardPoint]]] = field(default_factory=dict)
     # ПО з доріжки рахунку; кого немає — не прочитано
     scores: dict[Faction, int] = field(default_factory=dict)
     confidence: float = 0.0  # 0..1
-    board_shift_mm: float = 0.0  # зсув дошки від попереднього огляду, мм
 
 
 @dataclass(frozen=True)

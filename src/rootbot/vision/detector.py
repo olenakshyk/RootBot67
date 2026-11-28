@@ -10,13 +10,13 @@
    новий огляд починається з `target` або першим add_frames після detect().
 2. detect() — перевіряє покриття (неповне — попередження в лог, розпізнає з тим, що є) і запускає
    модель (PieceDetectorModel) один раз на всіх накопичених кадрах. Повертає чернетку
-   спостереження й RecheckRequest з причин якості — або None: "disagree" (кадри дають різну
-   кількість фігурок на галявині), "low confidence" (рамки з впевненістю між min_confidence
-   і sure_confidence).
+   спостереження й один RecheckRequest з усіма сумнівними галявинами — або None. Причини
+   (у reason через кому): "disagree" (кадри дають різну кількість фігурок на галявині),
+   "low confidence" (рамки з впевненістю між min_confidence і sure_confidence).
 3. refine(observation, frames) — лише після detect(): розпізнає нові кадри й оновлює галявини,
    які на них видно цілком.
 
-Рамка -> точка основи -> мм дошки -> галявина, у колі якої точка (поза галявинами — ігнор).
+Рамка -> точка основи -> мм дошки -> найближча галявина (види ON_CLEARINGS, точки в межах дошки).
 Та сама фігурка з різних кадрів (фракція, вид, ближче за vision.merge_mm) — одна фігурка.
 
 Ще не зроблено: маркери рахунку -> scores, запас котів на планшеті бота, поза дошки в базі робота.
@@ -47,6 +47,7 @@ COUNTED = {
     PieceKind.TOKEN: "tokens",
     PieceKind.PAWN: "pawn",
 }
+ON_CLEARINGS = {*COUNTED, PieceKind.KEEP}  # види, що стоять на галявинах
 
 
 @dataclass(frozen=True)
@@ -101,9 +102,8 @@ class Detector:
         self.mask_mm_per_px = mask_mm_per_px
         self._target = self.board_mask()  # що треба побачити в поточному огляді
         self._views: list[View] = []  # кадри поточного огляду
-        self._detected = (
-            False  # detect() уже був: refine() дозволено, add_frames() почне новий огляд
-        )
+        # detect() уже був: refine() дозволено, add_frames() почне новий огляд
+        self._detected = False
 
     # --- огляд ---
 
@@ -207,6 +207,8 @@ class Detector:
             for box in frame_boxes:
                 if box.faction is None or box.confidence < self.min_confidence:
                     continue  # нічиє (кубик) — не фігурка на галявині
+                if box.kind not in ON_CLEARINGS:
+                    continue  # маркер рахунку стоїть на доріжці рахунку
                 point = view.to_board_mm(*box.base_px())
                 clearing = self._clearing_at(point)
                 if clearing is not None:
@@ -216,10 +218,11 @@ class Detector:
         return located
 
     def _clearing_at(self, point: BoardPoint) -> ClearingId | None:
-        for c in self.board.clearings.values():
-            if _dist(point, c.center) <= c.radius_mm:
-                return c.id
-        return None
+        """Найближча до точки галявина; None — точка поза дошкою."""
+        w, h = self.board_detector.board_size_mm
+        if not (0 <= point.x <= w and 0 <= point.y <= h):
+            return None
+        return min(self.board.clearings.values(), key=lambda c: _dist(point, c.center)).id
 
     def _merge(self, located: list[_Located]) -> list[_Piece]:
         """Та сама фігурка з різних кадрів (фракція, вид, поруч) — одна."""
@@ -245,10 +248,12 @@ class Detector:
     def _fill(
         self, observation: BoardObservation, pieces: list[_Piece], clearings: set[ClearingId]
     ) -> None:
-        """Записати кількості й позиції фігурок для `clearings` (інші галявини не чіпати)."""
+        """Записати кількості й позиції фігурок і Keep для `clearings` (інші галявини не чіпати)."""
         for clearing in clearings:
             observation.pieces[clearing] = {}
             observation.positions[clearing] = {}
+        if observation.keep_clearing in clearings:
+            observation.keep_clearing = None
         for piece in pieces:
             if piece.clearing not in clearings:
                 continue
@@ -267,13 +272,15 @@ class Detector:
     def _quality_recheck(
         self, located: list[_Located], views: list[View], covered: set[ClearingId]
     ) -> RecheckRequest | None:
+        """Усі сумнівні галявини одним запитом; reason — їхні причини через кому."""
         disagree = self._disagreeing(located, views) & covered
-        if disagree:
-            return RecheckRequest(sorted(disagree), "disagree")
         low = {r.clearing for r in located if r.confidence < self.sure_confidence} & covered
-        if low:
-            return RecheckRequest(sorted(low), "low confidence")
-        return None
+        if not disagree | low:
+            return None
+        reasons = [
+            name for name, found in (("disagree", disagree), ("low confidence", low)) if found
+        ]
+        return RecheckRequest(sorted(disagree | low), ", ".join(reasons))
 
     def _disagreeing(self, located: list[_Located], views: list[View]) -> set[ClearingId]:
         """Галявини, на яких кадри, що бачать їх цілком, дають різну кількість фігурок."""
