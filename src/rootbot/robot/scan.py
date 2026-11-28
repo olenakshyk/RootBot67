@@ -9,7 +9,13 @@
 - scan(None) — лише початкова поза (перша в бібліотеці);
 - "not visible" — жадібно пози, що найбільше перекривають request.uncovered, поки є що додати;
 - інші причини ("disagree", "low confidence", "after battles") — пози, з яких вказані галявини
-  видно цілком; спершу ті, що ще не використовувались у цьому огляді.
+  видно цілком; лише ті, що ще не використовувались у цьому огляді (той самий вид не допоможе).
+Жодна поза не допомагає — порожній список кадрів, Orchestrator більше не перепитує.
+
+Рух у просторі суглобів не тримає висоту кінця руки, тому напряму — лише малі переходи
+(кожен суглоб не більше camera.direct_step_deg). Більші — через початкову позу: переходи
+початкова <-> поза бібліотеки перевірив explore_scan_poses.py. Якщо рука далі від початкової
+пози, ніж camera.max_joint_step_deg (наприклад, після place), — ArmError, рука не рухається.
 Огляд — від scan(None) або запиту не з переглядів (наприклад, "after battles") до наступного такого.
 Скільки разів переглядати — camera.max_rechecks, цикл веде Orchestrator.
 
@@ -29,10 +35,11 @@ from pathlib import Path
 import cv2
 import yaml
 
+from rootbot.common.errors import FatalError
 from rootbot.common.types import ClearingId
 from rootbot.config import ROOT
-from rootbot.robot.arm import Arm
-from rootbot.robot.scan_poses import ScanPose, load_scan_poses
+from rootbot.robot.arm import Arm, ArmError
+from rootbot.robot.scan_poses import ScanPose, joint_step, load_scan_poses
 from rootbot.vision.board_mask import BoardMask
 from rootbot.vision.camera import Camera, Frame
 from rootbot.vision.observation import RecheckRequest
@@ -50,12 +57,16 @@ class Scanner:
         camera: Camera,
         poses: list[ScanPose],
         *,
+        direct_step_deg: float,
+        max_step_deg: float,
         settle_s: float = 0.0,
         frames_dir: Path | None = None,
     ) -> None:
         self.arm = arm
         self.camera = camera
         self.poses = poses
+        self.direct_step_deg = direct_step_deg  # менші переходи — напряму, більші — через початкову
+        self.max_step_deg = max_step_deg  # далі від початкової пози рука сама не їде
         self.settle_s = settle_s  # пауза після руху перед кадром (вібрації)
         self.frames_dir = frames_dir  # куди зберігати кадри (debug); None — не зберігати
         self._scans = 0  # скільки оглядів зроблено за запуск
@@ -96,9 +107,24 @@ class Scanner:
 
     def shoot(self, pose: ScanPose, speed_deg_s: float | None = None) -> Frame:
         """Стати в позу, дочекатися, поки рука заспокоїться, і зняти кадр."""
-        self.arm.move_joints(pose.joints, speed_deg_s)
+        for joints in self.route(pose.joints):
+            self.arm.move_joints(joints, speed_deg_s)
         time.sleep(self.settle_s)
         return self.camera.capture()
+
+    def route(self, target: list[float]) -> list[list[float]]:
+        """Кути, через які їхати до target: напряму або через початкову позу (рука не рухається)."""
+        here = self.arm.joints()
+        if joint_step(here, target) <= self.direct_step_deg:
+            return [target]
+        start = self.poses[0].joints
+        step = joint_step(here, start)
+        if step > self.max_step_deg:
+            raise ArmError(
+                f"the arm is {step:.0f} deg from the scan start pose "
+                f"(max {self.max_step_deg}): bring it closer, it will not move there by itself"
+            )
+        return [start] if target == start else [start, target]
 
     def _covering(self, uncovered: BoardMask) -> list[ScanPose]:
         """Жадібно ще не використані пози, що додають найбільше непокритого, поки є що додати."""
@@ -116,16 +142,16 @@ class Scanner:
         return chosen
 
     def _seeing(self, clearings: list[ClearingId]) -> list[ScanPose]:
-        """Пози, з яких галявини видно цілком: спершу нові для огляду, далі ті, що бачать більше."""
+        """Нові для огляду пози, з яких галявини видно цілком; спершу ті, що бачать більше."""
         left = set(clearings)
-        rest = list(self.poses)
+        rest = [p for p in self.poses if p.name not in self._used]
         chosen: list[ScanPose] = []
         while left:
             useful = [p for p in rest if p.clearings & left]
             if not useful:
-                log.warning(f"scan: no scan pose sees clearings {sorted(left)} whole")
+                log.warning(f"scan: no new scan pose sees clearings {sorted(left)} whole")
                 break
-            best = max(useful, key=lambda p: (p.name not in self._used, len(p.clearings & left)))
+            best = max(useful, key=lambda p: len(p.clearings & left))
             chosen.append(best)
             left -= best.clearings
             rest.remove(best)
@@ -153,11 +179,23 @@ class Scanner:
 
 
 def create_scanner(cfg: dict, arm: Arm, camera: Camera, frames_dir: Path | None = None) -> Scanner:
-    path = ROOT / cfg["camera"]["scan_poses_file"]
-    poses = load_scan_poses(path) if path.exists() else []
+    c = cfg["camera"]
+    path = ROOT / c["scan_poses_file"]
+    try:
+        poses = load_scan_poses(path) if path.exists() else []
+    except ValueError as e:
+        raise FatalError(f"camera.scan_poses_file: {e}") from e
     if not poses:
         log.warning(
             f"no scan poses in {path} (scripts/explore_scan_poses.py): "
             "every scan is one frame from where the arm stands"
         )
-    return Scanner(arm, camera, poses, settle_s=cfg["camera"]["settle_s"], frames_dir=frames_dir)
+    return Scanner(
+        arm,
+        camera,
+        poses,
+        direct_step_deg=c["direct_step_deg"],
+        max_step_deg=c["max_joint_step_deg"],
+        settle_s=c["settle_s"],
+        frames_dir=frames_dir,
+    )

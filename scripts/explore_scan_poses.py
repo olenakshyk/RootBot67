@@ -1,10 +1,12 @@
 """Оглядові пози без навчання руками: рука сама пробує пози навколо поточної й лишає найкращі.
 
 Постав руку в позу, з якої камера бачить дошку (перевірити: scripts/check_camera.py), і запусти.
-Скрипт обчислює кандидатів (зсуви на ±shift, підйом, нахили; camera.explore), для кожного —
-обернена кінематика на контролері, рух на debug-швидкості, кадр, пошук дошки. Потім жадібно
-вибирає до `keep` поз, що разом покривають найбільше дошки, і пише їх у camera.scan_poses_file.
-Кадри й підсумок — у data/explore_poses/<час>/. Наприкінці рука повертається в початкову позу.
+Скрипт обчислює кандидатів (зсуви на ±shift, підйом, нахили; camera.explore) і відкидає ті, що
+поза robot.workspace_mm. Для кожного — обернена кінематика на контролері, рух на debug-швидкості
+з початкової пози, кадр, пошук дошки, назад у початкову: саме цими переходами потім їздить Scanner.
+Потім жадібно вибирає до `keep` поз, що разом покривають найбільше дошки, і пише їх у
+camera.scan_poses_file. Кадри й підсумок — у data/explore_poses/<час>/.
+Після помилки руки чи Ctrl+C рука лишається, де стала (#81): далі руками або в xArm Studio.
 
     python scripts/explore_scan_poses.py          # кожен рух чекає Enter (s — пропустити позу)
     python scripts/explore_scan_poses.py --yes    # без підтверджень (лише коли вже бачила, як їде)
@@ -25,7 +27,7 @@ import yaml
 from rootbot.config import ROOT, load_config
 from rootbot.game.board import create_board
 from rootbot.robot.arm import ArmError, XArm, create_arm
-from rootbot.robot.scan_poses import candidate_poses, select_poses
+from rootbot.robot.scan_poses import candidate_poses, in_workspace, joint_step, select_poses
 from rootbot.vision.board_detector import create_board_detector
 from rootbot.vision.board_mask import BoardMask
 from rootbot.vision.camera import create_camera
@@ -57,6 +59,10 @@ def main() -> None:
         print("WARNING: TCP payload is 0 kg; set the gripper + camera weight in xArm Studio")
     start_joints, start_tcp = arm.joints(), arm.tcp_pose()
     print(f"start: joints {fmt(start_joints)}, TCP {fmt(start_tcp)}")
+    workspace = cfg["robot"]["workspace_mm"]
+    if not in_workspace(start_tcp, workspace):
+        raise SystemExit(f"the start pose is outside robot.workspace_mm {workspace}")
+    max_step = cfg["camera"]["max_joint_step_deg"]
 
     results: dict[str, dict] = {}
     masks: dict[str, BoardMask] = {}
@@ -66,17 +72,21 @@ def main() -> None:
         )
         for i, (name, tcp) in enumerate(candidates):
             print(f"\n[{i + 1}/{len(candidates)}] {name}: TCP {fmt(tcp)}")
+            if not in_workspace(tcp, workspace):
+                print(f"  skip: outside robot.workspace_mm {workspace}")
+                continue
             try:
                 joints = start_joints if name == "start" else arm.inverse_kinematics(tcp)
             except ArmError as e:
                 print(f"  skip: no IK ({e})")
                 continue
-            step = max(abs(j - s) for j, s in zip(joints, start_joints, strict=True))
-            if step > ex["max_joint_step_deg"]:
-                print(f"  skip: a joint would turn {step:.0f} deg (max {ex['max_joint_step_deg']})")
+            step = joint_step(joints, start_joints)
+            if step > max_step:
+                print(f"  skip: a joint would turn {step:.0f} deg (max {max_step})")
                 continue
             if not a.yes and input(f"  joints {fmt(joints)}; Enter = move, s = skip: ") == "s":
                 continue
+            arm.move_joints(start_joints, speed)  # кожен кандидат — від початкової пози
             arm.move_joints(joints, speed)
             time.sleep(cfg["camera"]["settle_s"])
             frame = camera.capture()
@@ -103,9 +113,12 @@ def main() -> None:
                 f"  board found: inliers {found.inliers}, visible {results[name]['coverage']:.0%}, "
                 f"clearings {sorted(seen)}"
             )
-    finally:
         print("\nback to start")
         arm.move_joints(start_joints, speed)
+    except BaseException:
+        print("\nstopped: the arm stays where it is (move it by hand or in xArm Studio)")
+        raise
+    finally:
         camera_close = getattr(camera, "close", None)
         if camera_close:
             camera_close()

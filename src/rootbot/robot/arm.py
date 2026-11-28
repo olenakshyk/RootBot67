@@ -8,6 +8,7 @@ create_arm(cfg) обирає за config: robot.mock.
 без оберненої кінематики. Перевірити руку й перший рух: scripts/check_arm.py.
 """
 
+import ipaddress
 import logging
 from typing import Any, Protocol
 
@@ -150,6 +151,12 @@ def create_arm(cfg: dict) -> Arm:
     r = cfg["robot"]
     if r.get("mock", False):
         return MockArm()
+    try:
+        ipaddress.ip_address(r["ip"])
+    except ValueError as e:
+        raise FatalError(
+            f"robot.ip {r['ip']!r} is not an IP address: set it in config/local.yaml"
+        ) from e
     try:
         from xarm.wrapper import XArmAPI  # optional dependency (robot)
     except ImportError as e:

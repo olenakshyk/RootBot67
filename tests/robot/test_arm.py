@@ -153,7 +153,7 @@ def test_not_connected_is_temporary(monkeypatch, no_real_arm):
     api.connected = False
     monkeypatch.setattr(no_real_arm, "XArmAPI", lambda ip, is_radian: api)
     cfg = load_config()
-    cfg["robot"]["mock"] = False
+    cfg["robot"].update(mock=False, ip="192.168.1.201")
     with pytest.raises(TemporaryError, match="does not answer"):
         create_arm(cfg)
 
@@ -162,7 +162,7 @@ def test_controller_error_at_create_is_temporary_and_disconnects(monkeypatch, no
     api = FakeAPI(error_code=22)
     monkeypatch.setattr(no_real_arm, "XArmAPI", lambda ip, is_radian: api)
     cfg = load_config()
-    cfg["robot"]["mock"] = False
+    cfg["robot"].update(mock=False, ip="192.168.1.201")
     with pytest.raises(TemporaryError, match="xArm Studio"):
         create_arm(cfg)
     assert api.disconnected
@@ -171,8 +171,15 @@ def test_controller_error_at_create_is_temporary_and_disconnects(monkeypatch, no
 def test_without_sdk_is_fatal(monkeypatch):
     monkeypatch.setitem(sys.modules, "xarm.wrapper", None)  # import -> ImportError
     cfg = load_config()
-    cfg["robot"]["mock"] = False
+    cfg["robot"].update(mock=False, ip="192.168.1.201")
     with pytest.raises(FatalError, match="xarm-python-sdk"):
+        create_arm(cfg)
+
+
+def test_placeholder_ip_is_fatal():
+    cfg = load_config()
+    cfg["robot"].update(mock=False, ip="192.168.1.xxx")
+    with pytest.raises(FatalError, match="local.yaml"):
         create_arm(cfg)
 
 

@@ -13,6 +13,7 @@ from pathlib import Path
 import yaml
 
 from rootbot.common.types import BoardPoint, ClearingId
+from rootbot.robot.arm import JOINTS
 from rootbot.vision.board_mask import BoardMask
 
 Pose = list[float]  # x, y, z (мм), roll, pitch, yaw (градуси) у системі основи робота
@@ -43,6 +44,18 @@ def candidate_poses(
         delta = d_roll or d_pitch
         poses.append((f"tilt_{name}{delta:+.0f}", [x, y, z, roll + d_roll, pitch + d_pitch, yaw]))
     return poses
+
+
+def joint_step(a: list[float], b: list[float]) -> float:
+    """Найбільший поворот суглоба між двома наборами кутів, градуси."""
+    return max(abs(x - y) for x, y in zip(a, b, strict=True))
+
+
+def in_workspace(pose: Pose, workspace: dict[str, list[float]]) -> bool:
+    """Чи кінець руки в межах robot.workspace_mm (x, y, z, система основи)."""
+    return all(
+        lo <= v <= hi for v, (lo, hi) in zip(pose[:3], [workspace[k] for k in "xyz"], strict=True)
+    )
 
 
 def select_poses(
@@ -80,9 +93,12 @@ class ScanPose:
 
 
 def load_scan_poses(path: Path) -> list[ScanPose]:
-    """Бібліотека поз у порядку з файлу (перша — початкова)."""
+    """Бібліотека поз у порядку з файлу (перша — початкова).
+
+    ValueError, якщо в позі не JOINTS кутів або назви повторюються (Scanner розрізняє їх за назвою).
+    """
     data = yaml.safe_load(path.read_text()) or {}
-    return [
+    poses = [
         ScanPose(
             name=p["name"],
             joints=[float(j) for j in p["joints"]],
@@ -91,3 +107,13 @@ def load_scan_poses(path: Path) -> list[ScanPose]:
         )
         for p in data.get("poses") or []
     ]
+    names = [p.name for p in poses]
+    errors = [
+        f"pose {p.name!r}: expected {JOINTS} joint angles, got {len(p.joints)}"
+        for p in poses
+        if len(p.joints) != JOINTS
+    ]
+    errors += [f"pose name {n!r} is repeated" for n in sorted(set(names)) if names.count(n) > 1]
+    if errors:
+        raise ValueError(f"{path}: " + "; ".join(errors))
+    return poses

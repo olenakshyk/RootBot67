@@ -3,8 +3,8 @@
 Пози — з бібліотеки camera.scan_poses_file (scripts/explore_scan_poses.py). Розстав фігурки й
 запусти; після кожного кола скрипт чекає Enter (переставити фігурки й зняти ще коло) або q.
 Кадри й опис — у data/raw/<час>/: r<коло>_<поза>.jpg і r<коло>_<поза>.yaml (поза, кути суглобів,
-причина, чи знайдено дошку, inliers, видимі галявини, час). Наприкінці рука повертається в
-початкову позу.
+причина, чи знайдено дошку, inliers, видимі галявини, час). Після q рука повертається в
+початкову позу; після помилки руки чи Ctrl+C лишається, де стала (#81).
 
     python scripts/capture_dataset.py                          # усі пози, коло за колом
     python scripts/capture_dataset.py --poses start tilt_roll+12
@@ -86,9 +86,13 @@ def main() -> None:
                 print(f"  {name}: {status}, clearings {meta['clearings']}")
             if input(f"round {n} done; rearrange pieces, Enter = next round, q = quit: ") == "q":
                 break
-    finally:
         print("back to start")
-        scanner.shoot(scanner.poses[0], speed)
+        for joints in scanner.route(scanner.poses[0].joints):
+            arm.move_joints(joints, speed)
+    except BaseException:
+        print("\nstopped: the arm stays where it is (move it by hand or in xArm Studio)")
+        raise
+    finally:
         camera_close = getattr(camera, "close", None)
         if camera_close:
             camera_close()

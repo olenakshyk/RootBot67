@@ -222,9 +222,11 @@ class PipeWireCamera:
         assert self.process.stdout is not None
         while True:
             data = self.process.stdout.read(size)
+            # причину — до lock: _exit_reason чекає процес до 2 с, capture() стільки чекав би lock
+            error = self._exit_reason() if len(data) < size else None
             with self._new_frame:
-                if len(data) < size:
-                    self._error = self._exit_reason()
+                if error is not None:
+                    self._error = error
                 else:
                     shape = (self.height, self.width, 3)
                     self._frame = np.frombuffer(data, dtype=np.uint8).reshape(shape)

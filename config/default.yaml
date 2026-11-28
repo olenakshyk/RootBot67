@@ -45,11 +45,14 @@ camera:
   scan_poses_file: config/calibration/scan_poses.yaml
   max_rechecks: 4            # how many times the detector may ask to look again before it must answer
   settle_s: 0.5              # pause after the arm stops, before a frame (vibrations)
-  explore:                   # scripts/explore_scan_poses.py: candidates around the start pose (no calibration)
+  # Joint motions do not keep the camera height: only small steps go straight from pose to pose
+  direct_step_deg: 20        # every joint turns at most this -> straight; otherwise via the start pose
+  max_joint_step_deg: 60     # library poses are at most this from the start pose; an arm farther away does not move by itself
+  explore:                   # scripts/explore_scan_poses.py: candidates around the start pose (no calibration),
+                             # inside robot.workspace_mm and within camera.max_joint_step_deg of the start
     shift_mm: 80             # start shifted by +-this in x and y (robot base frame) ...
     lift_mm: 100             # ... lifted by this (sees more of the board) ...
     tilt_deg: 12             # ... tilted by +-this in roll and pitch (another view angle)
-    max_joint_step_deg: 60   # skip a candidate whose joints differ more from the start (the arm would flip)
     keep: 7                  # how many poses to keep (in camera.scan_poses_file)
 
 board:
