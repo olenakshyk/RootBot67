@@ -7,7 +7,8 @@ python -m rootbot.app.main
 1. читає конфігурацію (config/default.yaml + config/local.yaml);
 2. створює компоненти: камера, рука, Manipulator, Scanner, мапа, PieceDetectorModel (раз:
    ваги й прогрів), Detector, MovePlanner, OperatorServer і його HTTP API (фоновий потік);
-3. передає їх Orchestrator і запускає його;
+3. передає їх Orchestrator і запускає його; після кінця гри чекає «Play again» із застосунку
+   й починає нову партію (новий Orchestrator і MovePlanner, решта компонентів ті самі);
 4. помилки створення: TemporaryError -> повтор (startup.retries),
    FatalError -> зупинка з повідомленням;
 5. при будь-якому завершенні (кінець, помилка, Ctrl+C) рука йде в home, HTTP API зупиняється.
@@ -31,7 +32,7 @@ from typing import TypeVar
 from rootbot.app.move_planner import create_move_planner
 from rootbot.app.operator_api import start_operator_api
 from rootbot.app.operator_ui import create_operator_server
-from rootbot.app.orchestrator import Orchestrator
+from rootbot.app.orchestrator import Orchestrator, wait_for_new_game
 from rootbot.common.errors import FatalError, TemporaryError
 from rootbot.config import ROOT, load_config
 from rootbot.game.board import create_board
@@ -103,20 +104,24 @@ def main(argv: list[str] | None = None) -> int:
             "PieceDetectorModel", lambda: create_piece_detector_model(cfg), cfg
         )
         detector = create_with_retry("Detector", lambda: create_detector(cfg, board, model), cfg)
-        planner = create_with_retry("MovePlanner", lambda: create_move_planner(cfg, board), cfg)
         server = create_with_retry("OperatorServer", lambda: create_operator_server(cfg), cfg)
         api = create_with_retry("operator API", lambda: start_operator_api(server, cfg), cfg)
-        Orchestrator(
-            arm=arm,
-            scanner=scanner,
-            detector=detector,
-            board=board,
-            planner=planner,
-            manipulator=manipulator,
-            server=server,
-            cfg=cfg,
-        ).run()
-        return 0
+        orchestrator_cfg = cfg["orchestrator"]
+        while True:
+            planner = create_with_retry("MovePlanner", lambda: create_move_planner(cfg, board), cfg)
+            Orchestrator(
+                arm=arm,
+                scanner=scanner,
+                detector=detector,
+                board=board,
+                planner=planner,
+                manipulator=manipulator,
+                server=server,
+                cfg=cfg,
+            ).run()
+            wait_s = orchestrator_cfg["new_game_wait_s"]
+            if not wait_for_new_game(server, orchestrator_cfg["tick_period_s"], wait_s):
+                return 0
     except FatalError as e:
         log.error(f"===ERROR===\n{e}")
         return 1

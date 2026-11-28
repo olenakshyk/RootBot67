@@ -81,7 +81,7 @@ supply:
 
 game:
   dice: software             # software | manual
-  win_points: 30             # whoever reaches this many VP wins (checked at the start of a bot turn)
+  win_points: 30             # whoever reaches this many VP wins (bot: at once; others: at the start of a bot turn)
   birdsong:
     points_per_clearing: 2   # VP for each clearing the bot rules ...
     min_warriors: 3          # ... and where it has at least this many warriors
@@ -101,6 +101,8 @@ logging:
 orchestrator:
   tick_period_s: 0.1         # how often the Behaviour Tree is ticked
   step_retries: 3            # a failed turn step is repeated this many times, then the bot waits for a human
+  new_game_wait_s: null      # after game over, wait this long for "Play again"; null -> until Ctrl+C
+  notice_s: 4                # the app shows the bot's Birdsong notice (VP scored) this long before Daylight
 
 operator_server:            # HTTP API for the operator app (app/operator_api.py, ADR 0006)
   host: 0.0.0.0              # all interfaces: the app runs on a phone/tablet in the same Wi-Fi

@@ -5,8 +5,8 @@ from pathlib import Path
 import pytest
 
 from rootbot.app.move_planner import MovePlanner
-from rootbot.app.operator_ui import OperatorServer
-from rootbot.app.orchestrator import Orchestrator
+from rootbot.app.operator_ui import BattleInfo, Notice, OperatorServer
+from rootbot.app.orchestrator import Orchestrator, wait_for_new_game
 from rootbot.common.types import BoardPoint, ClearingId, Faction, OrderCard, PieceCounts, Suit
 from rootbot.config import load_config
 from rootbot.game.board import load_board
@@ -70,6 +70,7 @@ def obs(pieces, scores=None) -> BoardObservation:
 def make(observations, **game):
     cfg = load_config()
     cfg["orchestrator"]["tick_period_s"] = 0
+    cfg["orchestrator"]["notice_s"] = 0
     cfg["game"].update(game)
     board = load_board(AUTUMN)
     fakes = Fakes(observations)
@@ -122,6 +123,7 @@ def test_full_turn_order():
 
     server.order_card(FOX_1)
     tick_until(o, waiting(server, "dice"))
+    assert server.current_state().battle == BattleInfo(C(1), EYRIE)  # застосунку: з ким бій
     server.dice_rolled((3, 0))  # бот 3 влучання, Династія 0
     tick_until(o, waiting(server, "your_turn"))
 
@@ -144,17 +146,45 @@ def test_full_turn_order():
     assert not o.ctx.in_turn
 
 
+def test_birdsong_notice_pauses_before_daylight():
+    o, fakes, server = make([BEFORE_BATTLE])
+    o.notice_s = 60  # застосунок показує повідомлення, бот чекає
+    server.your_turn()
+    tick_until(o, lambda: server.current_state().step == "birdsong: scored")
+    assert server.current_state().notice == Notice("birdsong", 2, (C(1),), 60)
+    for _ in range(5):
+        o.tree.tick()
+    assert server.current_state().waiting_for is None  # ще не просить карту наказу
+    o.ctx.notice_until = 0  # час минув
+    tick_until(o, waiting(server, "order_card"))
+    assert server.current_state().notice is None
+
+
 def test_day_restarts_on_card_without_craft_cost():
     o, fakes, server = make([BEFORE_BATTLE, AFTER_BATTLE])
     server.your_turn()
     tick_until(o, waiting(server, "order_card"))
+    assert server.current_state().cards_left == 5
     server.order_card(OrderCard(Suit.MOUSE, ()))  # без вартості крафту, боїв на мишачих немає
     tick_until(
         o, lambda: o.ctx.cards_used == 1 and server.current_state().waiting_for == "order_card"
     )
+    now = server.current_state()  # застосунок пояснює, чому знову просить карту
+    assert (now.step, now.cards_left) == ("daylight: no craft cost, reveal the next order card", 4)
     server.order_card(OrderCard(Suit.RABBIT, (Suit.RABBIT,)))
     tick_until(o, waiting(server, "your_turn"))
     assert o.ctx.cards_used == 2
+
+
+def test_evening_when_schedule_runs_out():
+    o, fakes, server = make([BEFORE_BATTLE, AFTER_BATTLE])
+    server.your_turn()
+    for _ in range(5):  # увесь Розклад без вартості крафту
+        tick_until(o, waiting(server, "order_card"))
+        server.order_card(OrderCard(Suit.MOUSE, ()))
+    tick_until(o, waiting(server, "your_turn"))
+    assert o.ctx.cards_used == 5  # шостої карти бот не просив: одразу Вечір
+    assert server.current_state().message == "draw 5 order cards into the Schedule"
 
 
 def test_failed_step_retries_then_waits_for_human():
@@ -188,9 +218,11 @@ def test_card_given_scores_when_idle():
 def test_keep_removed_by_operator():
     o, fakes, server = make([BEFORE_BATTLE])
     o.ctx.state.keep_clearing = C(1)
+    assert not server.current_state().keep_destroyed
     server.keep_removed()
     o.tree.tick()
     assert o.ctx.state.keep_clearing is None
+    assert server.current_state().keep_destroyed  # застосунок ховає кнопку
 
 
 def test_win_points_end_the_game():
@@ -198,13 +230,37 @@ def test_win_points_end_the_game():
     server.your_turn()
     tick_until(o, lambda: o.ctx.game_over)
     assert fakes.calls[-1] == "home"
+    assert o.ctx.winner == EYRIE
+
+
+def test_bot_wins_at_once_mid_turn():
+    o, fakes, server = make([BEFORE_BATTLE], win_points=2)  # Світанок дає боту 2 ПО
+    server.your_turn()
+    o.run()  # без карти наказу: гра скінчилась ще на Світанку
+    now = server.current_state()
+    assert (now.step, now.waiting_for, now.winner) == ("game over", "new_game", BOT)
+    assert now.scores[BOT] == 2
+    assert fakes.calls[-1] == "home"
+    assert not o.ctx.order_cards and o.ctx.cards_used == 0
 
 
 def test_end_game_signal_stops_run():
     o, fakes, server = make([BEFORE_BATTLE])
+    server.set_status(keep_destroyed=True)  # з минулої партії
     server.end_game()
     o.run()
-    assert server.current_state().step == "game over"
+    now = server.current_state()
+    assert (now.step, now.waiting_for, now.winner) == ("game over", "new_game", None)
+    assert not now.keep_destroyed  # нова партія почалась із чистого стану
+
+
+def test_wait_for_new_game():
+    server = OperatorServer()
+    server.end_game()  # після кінця гри інші сигнали відкидаються
+    server.new_game()
+    assert wait_for_new_game(server, poll_s=0, timeout_s=1)
+    assert server.next_signal() is None
+    assert not wait_for_new_game(server, poll_s=0, timeout_s=0)
 
 
 @pytest.mark.parametrize("track", [[BoardPoint(0, i) for i in range(31)]])
