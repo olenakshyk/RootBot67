@@ -8,7 +8,9 @@ from typing import Any
 
 import yaml
 
+from rootbot.common.errors import FatalError
 from rootbot.common.types import BoardPoint, ClearingId, Suit
+from rootbot.config import ROOT
 
 NUM_CLEARINGS = 12
 NUM_CORNERS = 4
@@ -185,3 +187,11 @@ def _is_int(value: Any) -> bool:
 
 def _is_number(value: Any) -> bool:
     return isinstance(value, (int, float)) and not isinstance(value, bool)
+
+
+def create_board(cfg: dict) -> Board:
+    """Мапа з config board.map_file; якщо не читається — FatalError (програма не стартує)."""
+    try:
+        return load_board(ROOT / cfg["board"]["map_file"])
+    except (OSError, yaml.YAMLError, BoardError) as e:
+        raise FatalError(f"board.map_file: cannot load the map: {e}") from e

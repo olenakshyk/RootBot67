@@ -1,5 +1,8 @@
-# Дії, які видає бот: бій, рух, набір, очки.
-# Контракт з app: docs/architecture.md#ключові-інтерфейси.
+"""Дії, які видає бот (вихід game): бій, рух, набір, очки.
+
+Зовнішній опис: docs/architecture.md -> game -> actions.
+"""
+
 from __future__ import annotations
 
 from dataclasses import dataclass
