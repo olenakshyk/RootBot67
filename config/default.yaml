@@ -43,7 +43,8 @@ board:
     ransac_reproj_px: 3.0    # RANSAC inlier threshold, reference image px
     min_inliers: 40          # fewer -> board not found, fall back to the last good homography
     min_homography_det: 1.0e-9  # |det| below -> degenerate homography (board squashed to a line), not found
-  # Score track cells 0..30 [x, y] in board mm, for the bot's score token - TBD
+  # Score track cells 0..game.win_points [x, y] in board mm, for the bot's score token - TBD.
+  # Empty: the score token is not moved; otherwise exactly game.win_points + 1 points
   score_track_mm: []
   piece_spacing_mm: 30       # min distance between piece centers when placing (piece + gripper fingers) - TBD
   max_shift_mm: 3            # board pose changed more than this since the last scan -> tell the operator

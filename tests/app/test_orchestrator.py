@@ -205,6 +205,44 @@ def test_failed_step_retries_then_waits_for_human():
     assert len(moved) == 2  # жодне переміщення не повторилось двічі
 
 
+def test_move_onto_unscanned_clearing_scans_it_and_continues():
+    o, fakes, server = make([BEFORE_BATTLE, AFTER_BATTLE])
+    tick_until(o, waiting(server, WaitingFor.YOUR_TURN))
+    server.your_turn()
+    tick_until(o, waiting(server, WaitingFor.ORDER_CARD))
+    assert C(2) not in o.planner.occupied
+    server.order_card(FOX_1)
+    tick_until(o, waiting(server, WaitingFor.DICE))
+    server.dice_rolled((3, 0))
+    tick_until(o, waiting(server, WaitingFor.YOUR_TURN))
+
+    c2 = center(o, 2)
+    scan = fakes.calls.index("scan [2]")
+    first_move = next(i for i, c in enumerate(fakes.calls) if c.startswith("move"))
+    assert scan < first_move
+    assert fakes.calls[first_move].endswith(f" -> {c2}")
+    assert server.current_state().error is None
+    assert not o.ctx.in_turn
+
+
+def test_clearing_still_unknown_after_scan_waits_for_human():
+    no_positions = BoardObservation(
+        pieces={C(1): {BOT: PieceCounts(warriors=5)}}, positions={}, scores={}, confidence=1.0
+    )
+    o, fakes, server = make([no_positions])
+    tick_until(o, waiting(server, WaitingFor.YOUR_TURN))
+    server.your_turn()
+    tick_until(o, waiting(server, WaitingFor.ORDER_CARD))
+    server.order_card(FOX_1)
+    tick_until(o, lambda: server.current_state().step.startswith("needs help"))
+
+    state = server.current_state()
+    assert state.waiting_for == WaitingFor.YOUR_TURN
+    assert "clearing 1 needs a scan" in state.error
+    assert "scan [1]" in fakes.calls
+    assert not any(c.startswith("move") for c in fakes.calls)
+
+
 def test_card_given_scores_when_idle():
     o, fakes, server = make([BEFORE_BATTLE])
     tick_until(o, waiting(server, WaitingFor.YOUR_TURN))

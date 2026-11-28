@@ -4,6 +4,7 @@
 # який переглядають власники всіх модулів, що їх використовують.
 from __future__ import annotations
 
+import math
 from dataclasses import dataclass
 from enum import Enum
 from typing import NewType
@@ -62,3 +63,7 @@ class BoardPoint:
 
     x: float
     y: float
+
+    def distance_to(self, other: BoardPoint) -> float:
+        """Відстань до іншої точки, мм."""
+        return math.dist((self.x, self.y), (other.x, other.y))
