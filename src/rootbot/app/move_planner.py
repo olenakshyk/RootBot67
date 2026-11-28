@@ -17,8 +17,13 @@
 дії того самого ходу бачать актуальну дошку.
 
 Огляд оновлює лише галявини, які бачив; решта галявин зберігає відомі планувальнику місця.
-Кота бота беремо лише з відомого місця; коли відомих місць на галявині менше, ніж треба взяти, —
-PiecePositionUnknown.
+Коли треба взяти з галявини або поставити на галявину, якої планувальник не знає, він просить
+огляд — ClearingNeedsScan: Orchestrator оглядає цю галявину й повторює крок. Не знає — це для
+взяття менше відомих місць котів бота, ніж треба взяти, а для постановки — галявина, якої ще не
+покрив жоден огляд і на яку нічого не заплановано.
+
+Доріжка рахунку (board.score_track_mm) порожня — жетон рахунку бота не рухається, з попередженням;
+інакше в ній рівно game.win_points + 1 клітинка (0..win_points).
 """
 
 from __future__ import annotations
@@ -27,7 +32,7 @@ import logging
 import math
 from collections.abc import Iterator
 
-from rootbot.common.errors import TemporaryError
+from rootbot.common.errors import FatalError, TemporaryError
 from rootbot.common.types import BoardPoint, ClearingId
 from rootbot.game.actions import Move, Recruit
 from rootbot.game.board import Board
@@ -38,8 +43,13 @@ from rootbot.vision.observation import BoardObservation
 log = logging.getLogger(__name__)
 
 
-class PiecePositionUnknown(TemporaryError):
-    """На галявині менше відомих місць котів бота, ніж треба взяти; новий огляд їх оновить."""
+class ClearingNeedsScan(TemporaryError):
+    """Планувальник не знає галявину clearing досить, щоб узяти з неї чи поставити на неї:
+    Orchestrator оглядає її й повторює крок."""
+
+    def __init__(self, clearing: ClearingId, reason: str) -> None:
+        super().__init__(f"clearing {clearing} needs a scan: {reason}")
+        self.clearing = clearing
 
 
 class MovePlanner:
@@ -52,7 +62,7 @@ class MovePlanner:
     ) -> None:
         self.board = board
         self.board_size_mm = board_size_mm  # ширина, висота дошки, мм
-        self.score_track = score_track  # клітинки доріжки рахунку 0..30, мм дошки
+        self.score_track = score_track  # клітинки доріжки рахунку 0..win_points, мм дошки
         self.spacing_mm = spacing_mm  # мін. відстань між центрами фігурок (фігурка + пальці)
         self.bot_positions: dict[ClearingId, list[BoardPoint]] = {}  # де коти бота
         self.occupied: dict[ClearingId, list[BoardPoint]] = {}  # усі зайняті точки, з Keep
@@ -70,11 +80,14 @@ class MovePlanner:
             self.occupied[c] = list(observation.occupied.get(c, []))
 
     def move(self, move: Move) -> list[PieceMoveTask]:
+        """Обидві галявини перевіряються до будь-якої зміни: невдалий виклик нічого не змінює."""
+        self._require_scanned(move.dst)
         return [
             PieceMoveTask(point, self._put(move.dst)) for point in self._take(move.src, move.count)
         ]
 
     def recruit(self, recruit: Recruit) -> list[PieceMoveTask]:
+        self._require_scanned(recruit.clearing)
         return [PieceMoveTask(SUPPLY, self._put(recruit.clearing)) for _ in range(recruit.count)]
 
     def remove(self, clearing: ClearingId, count: int) -> list[PieceMoveTask]:
@@ -82,7 +95,7 @@ class MovePlanner:
         return [PieceMoveTask(point, SUPPLY) for point in self._take(clearing, count)]
 
     def score(self, old: int, new: int) -> list[PieceMoveTask]:
-        """Жетон рахунку бота з клітинки old на new (понад 30 — на 30)."""
+        """Жетон рахунку бота з клітинки old на new (понад win_points — на останню клітинку)."""
         if not self.score_track:
             log.warning("board.score_track_mm is not set: the score token is not moved")
             return []
@@ -99,7 +112,8 @@ class MovePlanner:
         точки на дошці, найближчі до центру цієї галявини (_counts_as): детектор зарахує фігурку
         там на цю галявину. Пошук закінчується на першому кільці без таких точок. Коли вільного
         місця немає й там — найменш тісне місце в колі галявини: точка, найдальша від найближчої
-        до неї зайнятої точки."""
+        до неї зайнятої точки. Галявина, якої планувальник не знає, — ClearingNeedsScan."""
+        self._require_scanned(clearing)
         c = self.board[clearing]
         taken = self.occupied.get(clearing, [])
         best, best_clearance = c.center, -1.0
@@ -126,17 +140,22 @@ class MovePlanner:
         w, h = self.board_size_mm
         if not (0 <= point.x <= w and 0 <= point.y <= h):
             return False
-        own = _dist(point, self.board[clearing].center)
+        own = point.distance_to(self.board[clearing].center)
         others = (c.center for c in self.board.clearings.values() if c.id != clearing)
-        return all(own < _dist(point, center) for center in others)
+        return all(own < point.distance_to(center) for center in others)
+
+    def _require_scanned(self, clearing: ClearingId) -> None:
+        """ClearingNeedsScan, якщо галявину не покрив жоден огляд і на неї нічого не заплановано."""
+        if clearing not in self.occupied:
+            raise ClearingNeedsScan(clearing, "no scan has covered it")
 
     def _take(self, clearing: ClearingId, count: int) -> list[BoardPoint]:
-        """count відомих місць котів бота на clearing; ці місця звільняються."""
+        """count відомих місць котів бота на clearing; ці місця звільняються. Відомих місць менше —
+        ClearingNeedsScan до будь-якої зміни."""
         positions = self.bot_positions.get(clearing, [])
         if len(positions) < count:
-            raise PiecePositionUnknown(
-                f"clearing {clearing}: {len(positions)} known bot piece positions, {count} needed"
-            )
+            reason = f"{len(positions)} known bot piece positions, {count} needed"
+            raise ClearingNeedsScan(clearing, reason)
         points, self.bot_positions[clearing] = positions[:count], positions[count:]
         for point in points:
             if point in self.occupied.get(clearing, []):
@@ -163,17 +182,22 @@ def _rings(center: BoardPoint, step: float) -> Iterator[tuple[float, list[BoardP
         r += step
 
 
-def _dist(a: BoardPoint, b: BoardPoint) -> float:
-    return math.dist((a.x, a.y), (b.x, b.y))
-
-
 def _clearance(point: BoardPoint, taken: list[BoardPoint]) -> float:
     """Відстань від point до найближчої фігурки з taken, мм; без фігурок — нескінченність."""
-    return min((_dist(point, q) for q in taken), default=math.inf)
+    return min((point.distance_to(q) for q in taken), default=math.inf)
 
 
 def create_move_planner(cfg: dict, board: Board) -> MovePlanner:
-    track = [BoardPoint(float(x), float(y)) for x, y in cfg["board"].get("score_track_mm", [])]
+    """MovePlanner з config. board.score_track_mm порожній або без значення — жетон рахунку не
+    рухається; інакше рівно game.win_points + 1 точка (клітинки 0..win_points), інша довжина —
+    FatalError."""
+    raw_track = cfg["board"].get("score_track_mm") or []
+    cells = cfg["game"]["win_points"] + 1
+    if raw_track and len(raw_track) != cells:
+        raise FatalError(
+            f"board.score_track_mm: expected {cells} points (0..{cells - 1}), got {len(raw_track)}"
+        )
+    track = [BoardPoint(float(x), float(y)) for x, y in raw_track]
     width, height = cfg["board"]["size_mm"]
     size = (float(width), float(height))
     return MovePlanner(board, size, track, cfg["board"]["piece_spacing_mm"])

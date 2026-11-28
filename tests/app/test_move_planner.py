@@ -5,7 +5,8 @@ from pathlib import Path
 
 import pytest
 
-from rootbot.app.move_planner import MovePlanner, PiecePositionUnknown
+from rootbot.app.move_planner import ClearingNeedsScan, MovePlanner, create_move_planner
+from rootbot.common.errors import FatalError
 from rootbot.common.types import BoardPoint, ClearingId, Faction
 from rootbot.game.actions import Move, Recruit
 from rootbot.game.board import load_board
@@ -44,7 +45,7 @@ def far_enough(point, others):
 
 def test_takes_known_bot_positions_first():
     cat = BoardPoint(100, 100)
-    p = planner({C1: {BOT: [cat]}})
+    p = planner({C1: {BOT: [cat]}, C2: {}})
     assert p.move(Move(C1, C2, 1))[0].source == cat
 
 
@@ -57,18 +58,43 @@ def test_full_scan_keeps_unseen_clearings():
 
 
 def test_full_scan_keeps_planned_spots_of_unseen_clearings():
-    p = planner()
+    p = planner({C1: {}})
     placed = p.recruit(Recruit(C1, 1))[0].target
     p.process(observation({C2: {}}))
     assert p.remove(C1, 1)[0].source == placed
 
 
 def test_take_without_known_position_raises():
-    p = planner({C1: {BOT: [BoardPoint(50, 50)]}})
-    with pytest.raises(PiecePositionUnknown):
+    p = planner({C1: {BOT: [BoardPoint(50, 50)]}, C2: {}})
+    with pytest.raises(ClearingNeedsScan) as error:
         p.move(Move(C1, C2, 2))
-    with pytest.raises(PiecePositionUnknown):
+    assert error.value.clearing == C1
+    with pytest.raises(ClearingNeedsScan) as error:
         p.remove(C2, 1)
+    assert error.value.clearing == C2
+
+
+def test_put_on_unscanned_clearing_raises():
+    p = planner({C1: {BOT: [BoardPoint(50, 50)]}})
+    with pytest.raises(ClearingNeedsScan) as error:
+        p.recruit(Recruit(C2, 1))
+    assert error.value.clearing == C2
+    with pytest.raises(ClearingNeedsScan):
+        p.free_spot(C2)
+
+
+def test_move_to_unscanned_clearing_changes_nothing():
+    cat = BoardPoint(50, 50)
+    p = planner({C1: {BOT: [cat]}})
+    with pytest.raises(ClearingNeedsScan) as error:
+        p.move(Move(C1, C2, 1))
+    assert error.value.clearing == C2
+    assert p.bot_positions == {C1: [cat]} and p.occupied == {C1: [cat]}
+
+
+def test_clearing_seen_empty_is_known():
+    p = planner({C2: {}})
+    assert len(p.recruit(Recruit(C2, 1))) == 1
 
 
 def test_free_spot_avoids_other_pieces():
@@ -136,7 +162,7 @@ def test_packed_surroundings_give_least_crowded_spot():
 
 
 def test_placed_pieces_take_space():
-    p = planner()
+    p = planner({C2: {}})
     targets = [t.target for t in p.recruit(Recruit(C2, 3))]
     for i, t in enumerate(targets):
         assert far_enough(t, targets[:i] + targets[i + 1 :])
@@ -145,7 +171,7 @@ def test_placed_pieces_take_space():
 
 
 def test_taken_place_becomes_free():
-    p = planner()
+    p = planner({C1: {}})
     center = p.board[C1].center
     p.recruit(Recruit(C1, 1))  # кіт у центр
     p.remove(C1, 1)  # забрали в запас
@@ -153,4 +179,28 @@ def test_taken_place_becomes_free():
 
 
 def test_recruit_comes_from_supply():
-    assert planner().recruit(Recruit(C1, 1))[0].source == SUPPLY
+    assert planner({C1: {}}).recruit(Recruit(C1, 1))[0].source == SUPPLY
+
+
+def config(score_track):
+    board = {"size_mm": list(BOARD_MM), "piece_spacing_mm": SPACING, "score_track_mm": score_track}
+    return {"board": board, "game": {"win_points": 30}}
+
+
+@pytest.mark.parametrize("score_track", [[], None])
+def test_no_score_track_leaves_token_in_place(score_track):
+    p = create_move_planner(config(score_track), load_board(AUTUMN))
+    assert p.score(3, 5) == []
+
+
+def test_full_score_track_moves_token():
+    track = [[10.0 * i, 400.0] for i in range(31)]
+    p = create_move_planner(config(track), load_board(AUTUMN))
+    task = p.score(3, 5)[0]
+    assert (task.source, task.target) == (BoardPoint(30, 400), BoardPoint(50, 400))
+
+
+def test_short_score_track_is_fatal():
+    track = [[10.0 * i, 400.0] for i in range(20)]
+    with pytest.raises(FatalError):
+        create_move_planner(config(track), load_board(AUTUMN))
