@@ -17,8 +17,10 @@
 дії того самого ходу бачать актуальну дошку.
 
 Огляд оновлює лише галявини, які бачив; решта галявин зберігає відомі планувальнику місця.
-Кота бота беремо лише з відомого місця; коли відомих місць на галявині менше, ніж треба взяти, —
-PiecePositionUnknown.
+Коли треба взяти з галявини або поставити на галявину, якої планувальник не знає, він просить
+огляд — ClearingNeedsScan: Orchestrator оглядає цю галявину й повторює крок. Не знає — це для
+взяття менше відомих місць котів бота, ніж треба взяти, а для постановки — галявина, якої ще не
+покрив жоден огляд і на яку нічого не заплановано.
 """
 
 from __future__ import annotations
@@ -38,8 +40,13 @@ from rootbot.vision.observation import BoardObservation
 log = logging.getLogger(__name__)
 
 
-class PiecePositionUnknown(TemporaryError):
-    """На галявині менше відомих місць котів бота, ніж треба взяти; новий огляд їх оновить."""
+class ClearingNeedsScan(TemporaryError):
+    """Планувальник не знає галявину clearing досить, щоб узяти з неї чи поставити на неї:
+    Orchestrator оглядає її й повторює крок."""
+
+    def __init__(self, clearing: ClearingId, reason: str) -> None:
+        super().__init__(f"clearing {clearing} needs a scan: {reason}")
+        self.clearing = clearing
 
 
 class MovePlanner:
@@ -70,11 +77,14 @@ class MovePlanner:
             self.occupied[c] = list(observation.occupied.get(c, []))
 
     def move(self, move: Move) -> list[PieceMoveTask]:
+        """Обидві галявини перевіряються до будь-якої зміни: невдалий виклик нічого не змінює."""
+        self._require_scanned(move.dst)
         return [
             PieceMoveTask(point, self._put(move.dst)) for point in self._take(move.src, move.count)
         ]
 
     def recruit(self, recruit: Recruit) -> list[PieceMoveTask]:
+        self._require_scanned(recruit.clearing)
         return [PieceMoveTask(SUPPLY, self._put(recruit.clearing)) for _ in range(recruit.count)]
 
     def remove(self, clearing: ClearingId, count: int) -> list[PieceMoveTask]:
@@ -99,7 +109,8 @@ class MovePlanner:
         точки на дошці, найближчі до центру цієї галявини (_counts_as): детектор зарахує фігурку
         там на цю галявину. Пошук закінчується на першому кільці без таких точок. Коли вільного
         місця немає й там — найменш тісне місце в колі галявини: точка, найдальша від найближчої
-        до неї зайнятої точки."""
+        до неї зайнятої точки. Галявина, якої планувальник не знає, — ClearingNeedsScan."""
+        self._require_scanned(clearing)
         c = self.board[clearing]
         taken = self.occupied.get(clearing, [])
         best, best_clearance = c.center, -1.0
@@ -130,13 +141,18 @@ class MovePlanner:
         others = (c.center for c in self.board.clearings.values() if c.id != clearing)
         return all(own < _dist(point, center) for center in others)
 
+    def _require_scanned(self, clearing: ClearingId) -> None:
+        """ClearingNeedsScan, якщо галявину не покрив жоден огляд і на неї нічого не заплановано."""
+        if clearing not in self.occupied:
+            raise ClearingNeedsScan(clearing, "no scan has covered it")
+
     def _take(self, clearing: ClearingId, count: int) -> list[BoardPoint]:
-        """count відомих місць котів бота на clearing; ці місця звільняються."""
+        """count відомих місць котів бота на clearing; ці місця звільняються. Відомих місць менше —
+        ClearingNeedsScan до будь-якої зміни."""
         positions = self.bot_positions.get(clearing, [])
         if len(positions) < count:
-            raise PiecePositionUnknown(
-                f"clearing {clearing}: {len(positions)} known bot piece positions, {count} needed"
-            )
+            reason = f"{len(positions)} known bot piece positions, {count} needed"
+            raise ClearingNeedsScan(clearing, reason)
         points, self.bot_positions[clearing] = positions[:count], positions[count:]
         for point in points:
             if point in self.occupied.get(clearing, []):
