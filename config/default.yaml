@@ -1,7 +1,7 @@
 # Default settings. Override locally in config/local.yaml (not committed).
 
 robot:
-  mock: false                # true — без справжньої руки, рухи пишуться в лог
+  mock: false                # true - no real arm, motions are only logged
   ip: "192.168.1.xxx"        # set in config/local.yaml
   speed_mm_s: 100            # TCP speed during play
   debug_speed_mm_s: 50       # TCP speed when testing new motion code
@@ -82,6 +82,7 @@ supply:
 game:
   dice: software             # software | manual
   win_points: 30             # whoever reaches this many VP wins (checked at the start of a bot turn)
+  die_max: 3                 # highest value on a battle die (dice are 0..3)
   birdsong:
     points_per_clearing: 2   # VP for each clearing the bot rules ...
     min_warriors: 3          # ... and where it has at least this many warriors
@@ -103,5 +104,5 @@ orchestrator:
   step_retries: 3            # a failed turn step is repeated this many times, then the bot waits for a human
 
 startup:
-  retries: 3                 # скільки разів повторити, якщо помилка тимчасова
+  retries: 3                 # how many times to retry a transient error
   retry_delay_s: 2
