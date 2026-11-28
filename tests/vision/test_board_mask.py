@@ -6,7 +6,7 @@ from rootbot.common.types import BoardPoint
 from rootbot.vision.board_detector import BoardHomography
 from rootbot.vision.board_mask import BoardMask
 
-BOARD_MM = (580.0, 440.0)
+BOARD_MM = (570.0, 440.0)  # board.size_mm
 
 
 def view(x0=0.0, w=600, h=600):
@@ -17,7 +17,7 @@ def view(x0=0.0, w=600, h=600):
 def test_whole_board_coverage():
     board = BoardMask.whole(BOARD_MM, 2)
     assert board.coverage([view()]) == 1.0
-    assert abs(board.coverage([view(w=290)]) - 0.5) < 0.01
+    assert abs(board.coverage([view(w=285)]) - 0.5) < 0.01
     assert board.coverage([]) == 0.0
 
 
@@ -39,4 +39,4 @@ def test_uncovered_part_and_its_centers():
     board = BoardMask.whole(BOARD_MM, 2)
     uncovered = board - board.visible_on([view(w=290)])
     (center,) = uncovered.centers()
-    assert abs(center.x - 435) < 3 and abs(center.y - 220) < 3
+    assert abs(center.x - 430) < 3 and abs(center.y - 220) < 3
