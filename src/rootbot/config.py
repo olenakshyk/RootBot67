@@ -11,6 +11,8 @@ def _merge(default: dict, custom: dict) -> dict:
     """замінює пункти default на custom"""
     out = dict(default)
     for key, value in custom.items():
+        if value is None and isinstance(out.get(key), dict):
+            continue  # порожня секція (усе в ній закоментовано) не стирає default
         if isinstance(value, dict) and isinstance(out.get(key), dict):
             out[key] = _merge(out[key], value)
         else:

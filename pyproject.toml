@@ -16,6 +16,7 @@ dependencies = [
 
 [project.optional-dependencies]
 vision = ["opencv-contrib-python>=4.9"]
+camera = ["pyrealsense2>=2.55"]  # RealSense on the arm; wheels only up to Python 3.14
 ml-model = ["ultralytics>=8.3"]  # vision.piece_model.type: yolo (pulls torch)
 robot = ["xarm-python-sdk>=1.14"]
 dev = ["pytest>=8", "pytest-cov>=5", "ruff>=0.6"]

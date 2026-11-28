@@ -85,18 +85,30 @@ source .venv/bin/activate
 # Тільки ігрова логіка й тести:
 pip install -e ".[dev]"
 
-# Усе разом (камера + робот):
+# Усе разом (зір + робот):
 pip install -e ".[dev,vision,robot]"
+
+# + камера RealSense (pyrealsense2 є лише для Python <= 3.14):
+pip install -e ".[dev,vision,robot,camera]"
 
 pytest
 ```
 
-Запуск **без робота і без камери** (робот замінений на MockArm, кадри читаються з теки),
-коли з'явиться `app/main.py`:
+Налаштування робочого місця: `config/default.yaml` спільний (у git), а `config/local.yaml` (не в git)
+перевизначає лише те, що відрізняється на цьому комп'ютері (IP робота, експозиція камери):
 
 ```bash
-python -m rootbot.app.main --mock-robot --mock-camera data/samples
+cp config/local.example.yaml config/local.yaml   # і заповнити
 ```
+
+Запуск **без робота і без камери**: у `config/local.yaml` поставити `robot.mock: true` (рухи лише
+пишуться в лог) і `camera.source: folder` (кадри з теки `camera.folder`), потім:
+
+```bash
+python -m rootbot.app.main
+```
+
+Перевірити камеру й дошку на кадрі: `python scripts/check_camera.py` (`--live` — вікно наживо).
 
 > ⚠️ Перед роботою зі **справжньою** рукою прочитайте [docs/hardware-and-safety.md](docs/hardware-and-safety.md).
 

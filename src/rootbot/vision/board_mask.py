@@ -41,6 +41,13 @@ class BoardMask:
         cv2.circle(grid, c, round(radius_mm / self.mm_per_px), 1, -1)
         return BoardMask(grid.astype(bool), self.mm_per_px)
 
+    def polygon(self, points: Sequence[BoardPoint]) -> BoardMask:
+        """Багатокутник на тій самій сітці (наприклад, видима з кадру частина дошки)."""
+        grid = np.zeros(self.grid.shape, dtype=np.uint8)
+        poly = np.array([(p.x / self.mm_per_px, p.y / self.mm_per_px) for p in points], np.int32)
+        cv2.fillPoly(grid, [poly], 1)
+        return BoardMask(grid.astype(bool), self.mm_per_px)
+
     def empty(self) -> BoardMask:
         return BoardMask(np.zeros(self.grid.shape, dtype=bool), self.mm_per_px)
 
@@ -58,14 +65,10 @@ class BoardMask:
 
     def visible_on(self, views: Sequence[BoardHomography]) -> BoardMask:
         """Частина маски, яку видно хоч на одному кадрі."""
-        seen = np.zeros(self.grid.shape, dtype=np.uint8)
+        seen = self.empty()
         for view in views:
-            quad = np.array(
-                [(p.x / self.mm_per_px, p.y / self.mm_per_px) for p in view.visible()],
-                dtype=np.int32,
-            )
-            cv2.fillPoly(seen, [quad], 1)
-        return self & BoardMask(seen.astype(bool), self.mm_per_px)
+            seen = seen | self.polygon(view.visible())
+        return self & seen
 
     def coverage(self, views: Sequence[BoardHomography]) -> float:
         """Частка маски, яку видно на кадрах (1.0 — усю; порожня маска вважається покритою)."""

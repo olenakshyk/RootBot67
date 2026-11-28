@@ -25,6 +25,7 @@ class Fakes:
         self.observations = observations
         self.missing: list = []  # що add_frames по черзі каже «ще не видно»; порожньо — видно все
         self.moves_to_fail = 0
+        self.helpless = False  # Scanner не має чим допомогти: на перегляди кадрів немає
 
     # Arm
     def home(self) -> None:
@@ -33,7 +34,7 @@ class Fakes:
     # Scanner
     def scan(self, request=None):
         self.calls.append("scan" if request is None else f"scan {request.clearings}")
-        return ["frame"]
+        return [] if self.helpless and request is not None else ["frame"]
 
     # Detector
     def _next(self):
@@ -220,6 +221,14 @@ def test_detector_refines_until_sure():
     o, fakes, server = make([(BEFORE_BATTLE, unsure), (AFTER_BATTLE, unsure), (AFTER_BATTLE, None)])
     assert o.observe_board() is AFTER_BATTLE
     assert fakes.calls == ["scan", "add", "detect", "scan [5]", "refine", "scan [5]", "refine"]
+
+
+def test_no_frames_no_repeated_request():
+    o, fakes, server = make([(BEFORE_BATTLE, RecheckRequest([C(5)], "disagree"))])
+    fakes.missing = [RecheckRequest([C(5)], "not visible")] * 2
+    fakes.helpless = True
+    assert o.observe_board() is BEFORE_BATTLE
+    assert fakes.calls == ["scan", "add", "scan [5]", "detect", "scan [5]"]
 
 
 def test_rechecks_share_one_limit():

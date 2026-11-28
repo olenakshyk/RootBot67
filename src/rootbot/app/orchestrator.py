@@ -174,16 +174,23 @@ class Orchestrator:
         1. знімати, поки детектор не скаже, що бачить усю ціль (add_frames -> None);
         2. розпізнати (detect);
         3. уточнювати, поки детектору є що переглянути (refine).
+        Без кадрів (Scanner нічим не може допомогти) той самий запит не повторюється.
         Повертає найкраще, що є."""
         missing = self.detector.add_frames(self.scanner.scan(request), target=target)
         rechecks = 0
         while missing and rechecks < self.max_rechecks:
             rechecks += 1
-            missing = self.detector.add_frames(self.scanner.scan(missing))
+            frames = self.scanner.scan(missing)
+            if not frames:
+                break
+            missing = self.detector.add_frames(frames)
         obs, recheck = self.detector.detect()
         while recheck and rechecks < self.max_rechecks:
             rechecks += 1
-            obs, recheck = self.detector.refine(obs, self.scanner.scan(recheck))
+            frames = self.scanner.scan(recheck)
+            if not frames:
+                break
+            obs, recheck = self.detector.refine(obs, frames)
         if recheck:
             log.warning(f"still unsure after {rechecks} rechecks: {recheck}")
         return obs

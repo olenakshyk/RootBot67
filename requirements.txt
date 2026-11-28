@@ -5,9 +5,11 @@
 # Ядро
 numpy>=1.26
 pyyaml>=6.0
+py_trees>=2.2
 
-# Камера (vision)
+# Камера (vision, camera)
 opencv-contrib-python>=4.9
+pyrealsense2>=2.55          # RealSense; wheel-и є лише до Python 3.14
 
 # Модель фігурок (ml-model), лише для vision.piece_model.type: yolo.
 # Закоментовано, бо тягне torch (кілька ГБ) - розкоментуйте, якщо потрібна YOLO-модель.
