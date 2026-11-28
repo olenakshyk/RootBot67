@@ -11,7 +11,7 @@ from rootbot.common.types import BoardPoint, ClearingId, Faction
 from rootbot.game.actions import Move, Recruit
 from rootbot.game.board import load_board
 from rootbot.game.state import BOT
-from rootbot.robot.manipulator import SUPPLY
+from rootbot.robot.manipulator import SUPPLY, PieceMoveTask
 from rootbot.vision.observation import BoardObservation
 
 AUTUMN = Path(__file__).resolve().parents[2] / "config" / "maps" / "autumn.yaml"
@@ -59,9 +59,10 @@ def test_full_scan_keeps_unseen_clearings():
 
 def test_full_scan_keeps_planned_spots_of_unseen_clearings():
     p = planner({C1: {}})
-    placed = p.recruit(Recruit(C1, 1))[0].target
+    task = p.recruit(Recruit(C1, 1))[0]
+    p.done(task)
     p.process(observation({C2: {}}))
-    assert p.remove(C1, 1)[0].source == placed
+    assert p.remove(C1, 1)[0].source == task.target
 
 
 def test_take_without_known_position_raises():
@@ -89,7 +90,70 @@ def test_move_to_unscanned_clearing_changes_nothing():
     with pytest.raises(ClearingNeedsScan) as error:
         p.move(Move(C1, C2, 1))
     assert error.value.clearing == C2
-    assert p.bot_positions == {C1: [cat]} and p.occupied == {C1: [cat]}
+    assert p.bot_positions == {C1: [cat]} and p.occupied == {C1: [cat]} and p.goals == []
+
+
+def test_planning_keeps_picture_until_done():
+    cat = BoardPoint(50, 50)
+    p = planner({C1: {BOT: [cat]}, C2: {}})
+    tasks = p.move(Move(C1, C2, 1))
+    assert p.goals == tasks
+    assert p.bot_positions == {C1: [cat], C2: []} and p.occupied == {C1: [cat], C2: []}
+    p.done(tasks[0])
+    target = tasks[0].target
+    assert p.goals == []
+    assert p.bot_positions == {C1: [], C2: [target]} and p.occupied == {C1: [], C2: [target]}
+
+
+def test_pending_source_is_not_taken_again():
+    cats = [BoardPoint(50, 50), BoardPoint(90, 50)]
+    p = planner({C1: {BOT: cats}, C2: {}})
+    first = p.move(Move(C1, C2, 1))[0]
+    second = p.remove(C1, 1)[0]
+    assert {first.source, second.source} == set(cats)
+    with pytest.raises(ClearingNeedsScan):
+        p.move(Move(C1, C2, 1))
+
+
+def test_pending_targets_stay_taken_across_calls():
+    p = planner({C2: {}})
+    first = p.recruit(Recruit(C2, 1))[0].target
+    second = p.recruit(Recruit(C2, 1))[0].target
+    assert far_enough(second, [first])
+
+
+def test_drop_goals_forgets_pending_moves():
+    p = planner({C1: {}})
+    p.recruit(Recruit(C1, 1))
+    p.drop_goals()
+    assert p.goals == [] and p.free_spot(C1) == p.board[C1].center
+
+
+def test_shifted_pending_source_is_matched():
+    cat, shifted = BoardPoint(50, 50), BoardPoint(53, 48)
+    p = planner({C1: {BOT: [cat]}, C2: {}})
+    task = p.move(Move(C1, C2, 1))[0]
+    p.process(observation({C1: {BOT: [shifted]}}))
+    with pytest.raises(ClearingNeedsScan):
+        p.remove(C1, 1)
+    p.done(task)
+    assert p.bot_positions[C1] == [] and p.occupied[C1] == []
+    assert p.bot_positions[C2] == [task.target]
+
+
+def test_score_goal_is_done():
+    track = [[10.0 * i, 400.0] for i in range(31)]
+    p = create_move_planner(config(track), load_board(AUTUMN))
+    task = p.score(3, 5)[0]
+    assert p.goals == [task]
+    p.done(task)
+    assert p.goals == []
+
+
+def test_done_with_unknown_task_raises():
+    p = planner({C1: {}})
+    with pytest.raises(ValueError):
+        p.done(PieceMoveTask(SUPPLY, p.board[C1].center))
 
 
 def test_clearing_seen_empty_is_known():
@@ -173,8 +237,8 @@ def test_placed_pieces_take_space():
 def test_taken_place_becomes_free():
     p = planner({C1: {}})
     center = p.board[C1].center
-    p.recruit(Recruit(C1, 1))  # кіт у центр
-    p.remove(C1, 1)  # забрали в запас
+    p.done(p.recruit(Recruit(C1, 1))[0])  # кіт у центр
+    p.done(p.remove(C1, 1)[0])  # забрали в запас
     assert p.free_spot(C1) == center
 
 

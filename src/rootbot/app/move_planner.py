@@ -13,14 +13,20 @@
 такої точки немає, пошук іде далі за коло, поки точка лежить на дошці (board.size_mm) і найближча
 до центру саме цієї галявини: детектор зараховує фігурку на найближчу галявину, тож там вона
 лічиться на цю. Коли немає й там, бере найменш тісну точку кола — найдальшу від найближчої зайнятої
-точки. Він пам'ятає заплановане: узяте місце звільняється, поставлене — займається, тож наступні
-дії того самого ходу бачать актуальну дошку.
+точки.
 
-Огляд оновлює лише галявини, які бачив; решта галявин зберігає відомі планувальнику місця.
-Коли треба взяти з галявини або поставити на галявину, якої планувальник не знає, він просить
-огляд — ClearingNeedsScan: Orchestrator оглядає цю галявину й повторює крок. Не знає — це для
-взяття менше відомих місць котів бота, ніж треба взяти, а для постановки — галявина, якої ще не
-покрив жоден огляд і на яку нічого не заплановано.
+Заплановане планувальник тримає як цілі (goals): переміщення, яких рука ще не виконала, разом
+з жетоном рахунку. Кота, який уже є джерелом цілі, він удруге не бере, а місця, куди цілі ставлять
+фігурки, вважає зайнятими. Картину дошки (bot_positions, occupied) змінює лише done(task) — коли
+рука справді перенесла фігурку; drop_goals() забуває всі цілі (перерваний хід). Огляд між
+плануванням і done може трохи зсунути ту саму фігурку, тож точку кота з джерелом цілі він зіставляє
+в межах spacing_mm / 2.
+
+Огляд оновлює картину лише на галявинах, які бачив; решта галявин зберігає відомі планувальнику
+місця, а цілі лишаються як є. Коли треба взяти з галявини або поставити на галявину, якої
+планувальник не знає, він просить огляд — ClearingNeedsScan: Orchestrator оглядає цю галявину й
+повторює крок. Не знає — це для взяття менше відомих місць котів бота, не зайнятих цілями, ніж
+треба взяти, а для постановки — галявина, якої ще не покрив жоден огляд.
 
 Доріжка рахунку (board.score_track_mm) порожня — жетон рахунку бота не рухається, з попередженням;
 інакше в ній рівно game.win_points + 1 клітинка (0..win_points).
@@ -31,13 +37,15 @@ from __future__ import annotations
 import logging
 import math
 from collections.abc import Iterator
+from dataclasses import dataclass
+from typing import Literal
 
 from rootbot.common.errors import FatalError, TemporaryError
 from rootbot.common.types import BoardPoint, ClearingId
 from rootbot.game.actions import Move, Recruit
 from rootbot.game.board import Board
 from rootbot.game.state import BOT
-from rootbot.robot.manipulator import SUPPLY, PieceMoveTask
+from rootbot.robot.manipulator import SUPPLY, Location, PieceMoveTask
 from rootbot.vision.observation import BoardObservation
 
 log = logging.getLogger(__name__)
@@ -50,6 +58,15 @@ class ClearingNeedsScan(TemporaryError):
     def __init__(self, clearing: ClearingId, reason: str) -> None:
         super().__init__(f"clearing {clearing} needs a scan: {reason}")
         self.clearing = clearing
+
+
+@dataclass(frozen=True)
+class _Goal:
+    """Заплановане переміщення й галявини його кінців (SUPPLY — запас, None — доріжка рахунку)."""
+
+    task: PieceMoveTask
+    source: ClearingId | Literal["supply"] | None
+    target: ClearingId | Literal["supply"] | None
 
 
 class MovePlanner:
@@ -66,36 +83,68 @@ class MovePlanner:
         self.spacing_mm = spacing_mm  # мін. відстань між центрами фігурок (фігурка + пальці)
         self.bot_positions: dict[ClearingId, list[BoardPoint]] = {}  # де коти бота
         self.occupied: dict[ClearingId, list[BoardPoint]] = {}  # усі зайняті точки, з Keep
+        self._goals: list[_Goal] = []
 
     def process(
         self, observation: BoardObservation, clearings: list[ClearingId] | None = None
     ) -> None:
         """Коти бота й зайняті точки на галявинах, які бачив огляд: на всіх з
         observation.positions або лише на вказаних clearings. Інші галявини зберігають відомі
-        місця, також заплановані тут."""
+        місця; цілі лишаються як є."""
         if clearings is None:
             clearings = list(observation.positions)
         for c in clearings:
             self.bot_positions[c] = list(observation.positions.get(c, {}).get(BOT, []))
             self.occupied[c] = list(observation.occupied.get(c, []))
 
+    @property
+    def goals(self) -> list[PieceMoveTask]:
+        """Заплановані переміщення, яких рука ще не виконала, у порядку планування."""
+        return [goal.task for goal in self._goals]
+
     def move(self, move: Move) -> list[PieceMoveTask]:
-        """Обидві галявини перевіряються до будь-якої зміни: невдалий виклик нічого не змінює."""
+        """Цілі: move.count котів з move.src на вільні місця move.dst. Обидві галявини
+        перевіряються до будь-якої зміни: невдалий виклик нічого не змінює."""
         self._require_scanned(move.dst)
+        sources = self._take(move.src, move.count)
         return [
-            PieceMoveTask(point, self._put(move.dst)) for point in self._take(move.src, move.count)
+            self._plan(point, move.src, self.free_spot(move.dst), move.dst) for point in sources
         ]
 
     def recruit(self, recruit: Recruit) -> list[PieceMoveTask]:
+        """Цілі: recruit.count котів із запасу на вільні місця recruit.clearing."""
         self._require_scanned(recruit.clearing)
-        return [PieceMoveTask(SUPPLY, self._put(recruit.clearing)) for _ in range(recruit.count)]
+        c = recruit.clearing
+        return [self._plan(SUPPLY, SUPPLY, self.free_spot(c), c) for _ in range(recruit.count)]
 
     def remove(self, clearing: ClearingId, count: int) -> list[PieceMoveTask]:
-        """Втрати бота: воїни з галявини назад у запас."""
-        return [PieceMoveTask(point, SUPPLY) for point in self._take(clearing, count)]
+        """Втрати бота, цілі: воїни з галявини назад у запас."""
+        return [
+            self._plan(point, clearing, SUPPLY, SUPPLY) for point in self._take(clearing, count)
+        ]
+
+    def done(self, task: PieceMoveTask) -> None:
+        """Рука виконала task: ціль знято, картина дошки оновлена — на галявині source звільнена
+        точка, найближча до source в межах spacing_mm / 2 (огляд міг трохи зсунути ту саму
+        фігурку), на галявині target зайнята точка target. Ціль жетона рахунку лише знімається.
+        Задача, якої немає серед цілей, — ValueError."""
+        goal = next((goal for goal in self._goals if goal.task == task), None)
+        if goal is None:
+            raise ValueError(f"not a pending goal: {task}")
+        self._goals.remove(goal)
+        if goal.source not in (SUPPLY, None):
+            self._release(goal.source, task.source)
+        if goal.target not in (SUPPLY, None):
+            self.bot_positions.setdefault(goal.target, []).append(task.target)
+            self.occupied[goal.target].append(task.target)
+
+    def drop_goals(self) -> None:
+        """Забути всі цілі (перерваний хід); картина дошки лишається як є."""
+        self._goals.clear()
 
     def score(self, old: int, new: int) -> list[PieceMoveTask]:
-        """Жетон рахунку бота з клітинки old на new (понад win_points — на останню клітинку)."""
+        """Ціль: жетон рахунку бота з клітинки old на new (понад win_points — на останню
+        клітинку)."""
         if not self.score_track:
             log.warning("board.score_track_mm is not set: the score token is not moved")
             return []
@@ -103,7 +152,7 @@ class MovePlanner:
         old, new = min(old, last), min(new, last)
         if old == new:
             return []
-        return [PieceMoveTask(self.score_track[old], self.score_track[new])]
+        return [self._plan(self.score_track[old], None, self.score_track[new], None)]
 
     def free_spot(self, clearing: ClearingId) -> BoardPoint:
         """Найближче до центру місце галявини, вільне від зайнятих точок (фігурки, Keep).
@@ -112,10 +161,12 @@ class MovePlanner:
         точки на дошці, найближчі до центру цієї галявини (_counts_as): детектор зарахує фігурку
         там на цю галявину. Пошук закінчується на першому кільці без таких точок. Коли вільного
         місця немає й там — найменш тісне місце в колі галявини: точка, найдальша від найближчої
-        до неї зайнятої точки. Галявина, якої планувальник не знає, — ClearingNeedsScan."""
+        до неї зайнятої точки. Місця, куди ставлять фігурки цілі, теж зайняті. Галявина, якої
+        планувальник не знає, — ClearingNeedsScan."""
         self._require_scanned(clearing)
         c = self.board[clearing]
-        taken = self.occupied.get(clearing, [])
+        planned = [goal.task.target for goal in self._goals if goal.target == clearing]
+        taken = self.occupied[clearing] + planned
         best, best_clearance = c.center, -1.0
         for r, ring in _rings(c.center, self.spacing_mm / 2):
             inside = r <= c.radius_mm
@@ -145,28 +196,48 @@ class MovePlanner:
         return all(own < point.distance_to(center) for center in others)
 
     def _require_scanned(self, clearing: ClearingId) -> None:
-        """ClearingNeedsScan, якщо галявину не покрив жоден огляд і на неї нічого не заплановано."""
+        """ClearingNeedsScan, якщо галявину не покрив жоден огляд."""
         if clearing not in self.occupied:
             raise ClearingNeedsScan(clearing, "no scan has covered it")
 
     def _take(self, clearing: ClearingId, count: int) -> list[BoardPoint]:
-        """count відомих місць котів бота на clearing; ці місця звільняються. Відомих місць менше —
-        ClearingNeedsScan до будь-якої зміни."""
+        """count відомих місць котів бота на clearing, що не ближче за spacing_mm / 2 до джерела
+        жодної цілі (огляд міг трохи зсунути ту саму фігурку). Таких місць менше —
+        ClearingNeedsScan."""
+        planned = [goal.task.source for goal in self._goals if goal.source == clearing]
         positions = self.bot_positions.get(clearing, [])
-        if len(positions) < count:
-            reason = f"{len(positions)} known bot piece positions, {count} needed"
+        free = [point for point in positions if self._nearest(planned, point) is None]
+        if len(free) < count:
+            reason = f"{len(free)} known bot piece positions, {count} needed"
             raise ClearingNeedsScan(clearing, reason)
-        points, self.bot_positions[clearing] = positions[:count], positions[count:]
-        for point in points:
-            if point in self.occupied.get(clearing, []):
-                self.occupied[clearing].remove(point)
-        return points
+        return free[:count]
 
-    def _put(self, clearing: ClearingId) -> BoardPoint:
-        point = self.free_spot(clearing)
-        self.bot_positions.setdefault(clearing, []).append(point)
-        self.occupied.setdefault(clearing, []).append(point)
-        return point
+    def _release(self, clearing: ClearingId, point: BoardPoint) -> None:
+        """Прибирає з bot_positions і occupied галявини точку, найближчу до point у межах
+        spacing_mm / 2."""
+        for points in (self.bot_positions.get(clearing, []), self.occupied[clearing]):
+            nearest = self._nearest(points, point)
+            if nearest is None:
+                log.debug(f"clearing {clearing}: no piece near the moved one to release")
+            else:
+                points.remove(nearest)
+
+    def _nearest(self, points: list[BoardPoint], point: BoardPoint) -> BoardPoint | None:
+        """Точка з points, найближча до point, якщо вона не далі за spacing_mm / 2."""
+        near = [q for q in points if q.distance_to(point) <= self.spacing_mm / 2]
+        return min(near, key=point.distance_to, default=None)
+
+    def _plan(
+        self,
+        source: Location,
+        source_clearing: ClearingId | Literal["supply"] | None,
+        target: Location,
+        target_clearing: ClearingId | Literal["supply"] | None,
+    ) -> PieceMoveTask:
+        """Нова ціль source -> target; повертає її задачу."""
+        task = PieceMoveTask(source, target)
+        self._goals.append(_Goal(task, source_clearing, target_clearing))
+        return task
 
 
 def _rings(center: BoardPoint, step: float) -> Iterator[tuple[float, list[BoardPoint]]]:

@@ -49,7 +49,8 @@ class GameState:
         - Keep — за побаченими галявинами: огляд бачить Keep на галявині → Keep там; огляд бачить
           галявину з Keep без нього → Keep знищено (None); галявина з Keep поза оглядом → Keep
           лишається попереднім;
-        - рахунки людей — з камери, свій рахунок бот веде сам.
+        - рахунки людей — з камери; кого камера не прочитала, лишається останній відомий;
+          свій рахунок бот веде сам.
         Новий стан спершу перевіряється: суперечливий огляд кидає GameStateError, і стан
         лишається попереднім.
         """
@@ -64,7 +65,9 @@ class GameState:
             self,
             pieces=self.pieces | {c: fresh[c] for c in seen},
             keep_clearing=keep,
-            scores={f: s for f, s in scores.items() if f != BOT} | {BOT: self.scores.get(BOT, 0)},
+            scores=self.scores
+            | {f: s for f, s in scores.items() if f != BOT}
+            | {BOT: self.scores.get(BOT, 0)},
         )
         self.pieces, self.keep_clearing, self.scores = new.pieces, new.keep_clearing, new.scores
 

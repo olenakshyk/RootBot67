@@ -9,6 +9,7 @@ from rootbot.app.operator_ui import OperatorServer, WaitingFor
 from rootbot.app.orchestrator import Orchestrator
 from rootbot.common.types import BoardPoint, ClearingId, Faction, OrderCard, PieceCounts, Suit
 from rootbot.config import load_config
+from rootbot.game.actions import Move
 from rootbot.game.board import load_board
 from rootbot.game.state import BOT
 from rootbot.robot.manipulator import SUPPLY
@@ -240,6 +241,36 @@ def test_clearing_still_unknown_after_scan_waits_for_human():
     assert state.waiting_for == WaitingFor.YOUR_TURN
     assert "clearing 1 needs a scan" in state.error
     assert "scan [1]" in fakes.calls
+    assert not any(c.startswith("move") for c in fakes.calls)
+
+
+def test_failed_arm_move_keeps_goal_until_retry_succeeds():
+    alone = obs({C(1): {BOT: PieceCounts(warriors=5)}})
+    o, fakes, server = make([alone])
+    o.planner.process(alone, [C(1), C(2)])
+    o.ctx.tasks = o.planner.move(Move(C(1), C(2), 2))
+    before = {c: list(points) for c, points in o.planner.bot_positions.items()}
+    fakes.moves_to_fail = 1
+    with pytest.raises(RuntimeError):
+        o.run_tasks()
+    assert o.planner.bot_positions == before
+    assert o.planner.goals == o.ctx.tasks and len(o.ctx.tasks) == 2
+
+    tasks = list(o.ctx.tasks)
+    o.run_tasks()
+    assert o.planner.goals == [] and o.ctx.tasks == []
+    assert o.planner.bot_positions[C(1)] == alone.positions[C(1)][BOT][2:]
+    assert o.planner.bot_positions[C(2)] == [task.target for task in tasks]
+
+
+def test_aborted_turn_drops_pending_tasks():
+    o, fakes, server = make([obs({}, scores={EYRIE: 30})])
+    o.planner.score_track = [BoardPoint(0, i) for i in range(31)]
+    o.ctx.tasks = o.planner.score(0, 1)
+    tick_until(o, waiting(server, WaitingFor.YOUR_TURN))
+    server.your_turn()
+    tick_until(o, lambda: o.ctx.game_over)
+    assert o.ctx.tasks == [] and o.planner.goals == []
     assert not any(c.startswith("move") for c in fakes.calls)
 
 
