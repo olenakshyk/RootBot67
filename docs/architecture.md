@@ -127,6 +127,10 @@ sequenceDiagram
             App->>Op: кинути кубики, скільки випало
             App->>Game: resolve_battle
             Game-->>App: BattleResult
+            App->>Rob: зняти втрати бота, home
+            App->>Op: що зняти кожній фракції людей
+            Op->>App: зняли, «Хід бота»
+            App->>Vis: огляд галявин боїв
         end
         App->>Rob: PieceMoveTask × N
     end

@@ -86,8 +86,8 @@ supply:
   slots_mm: []
 
 game:
-  dice: software             # software | manual
-  win_points: 30             # whoever reaches this many VP wins (checked at the start of a bot turn)
+  dice: manual               # manual: the operator enters each roll in the app | automated: the robot throws real dice (planned)
+  win_points: 30             # whoever reaches this many VP wins at once: the bot when its VP land, the humans at the start of a bot turn
   die_max: 3                 # highest value on a battle die (dice are 0..3)
   birdsong:
     points_per_clearing: 2   # VP for each clearing the bot rules ...
@@ -108,6 +108,7 @@ logging:
 orchestrator:
   tick_period_s: 0.1         # how often the Behaviour Tree is ticked
   step_retries: 3            # a failed turn step is repeated this many times, then the bot waits for a human
+  card_given_delay_s: 4      # after "card given" the arm waits this long before moving the score token
 
 startup:
   retries: 3                 # how many times to retry a transient error
