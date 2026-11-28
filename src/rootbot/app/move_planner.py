@@ -8,7 +8,8 @@
 
 Детектор каже лише, хто де стоїть (BoardObservation.positions). Вільне місце планувальник шукає сам:
 точка в колі галявини (центр і радіус з мапи), найближча до центру, що не ближче за
-board.piece_spacing_mm до будь-якої фігурки. Він пам'ятає заплановане: узяте місце звільняється,
+board.piece_spacing_mm до будь-якої фігурки. Коли такої точки немає, бере найменш тісну — найдальшу
+від найближчої фігурки. Він пам'ятає заплановане: узяте місце звільняється,
 поставлене — займається, тож наступні дії того самого ходу бачать актуальну дошку.
 
 Якщо позиції котів не відомі, береться центр галявини: Manipulator уточнює місце кадром зблизька.
@@ -72,14 +73,21 @@ class MovePlanner:
         return [PieceMoveTask(self.score_track[old], self.score_track[new])]
 
     def free_spot(self, clearing: ClearingId) -> BoardPoint:
-        """Найближче до центру місце галявини, вільне від інших фігурок."""
+        """Найближче до центру місце галявини, вільне від інших фігурок. Коли вільного місця
+        немає — найменш тісне: точка, найдальша від найближчої до неї фігурки."""
         c = self.board[clearing]
         taken = self.occupied.get(clearing, [])
+        best, best_clearance = c.center, -1.0
         for point in _candidates(c.center, c.radius_mm, self.spacing_mm / 2):
-            if all(math.dist((point.x, point.y), (q.x, q.y)) >= self.spacing_mm for q in taken):
+            clearance = _clearance(point, taken)
+            if clearance >= self.spacing_mm:
                 return point
-        log.warning(f"clearing {clearing}: no free spot, placing at the center")
-        return c.center
+            if clearance > best_clearance:
+                best, best_clearance = point, clearance
+        log.warning(
+            f"clearing {clearing}: no free spot, nearest piece {best_clearance:.0f} mm away"
+        )
+        return best
 
     def _take(self, clearing: ClearingId) -> BoardPoint:
         positions = self.bot_positions.get(clearing)
@@ -106,6 +114,11 @@ def _candidates(center: BoardPoint, max_r: float, step: float) -> Iterator[Board
             angle = 2 * math.pi * i / n
             yield BoardPoint(center.x + r * math.cos(angle), center.y + r * math.sin(angle))
         r += step
+
+
+def _clearance(point: BoardPoint, taken: list[BoardPoint]) -> float:
+    """Відстань від point до найближчої фігурки з taken, мм; без фігурок — нескінченність."""
+    return min((math.dist((point.x, point.y), (q.x, q.y)) for q in taken), default=math.inf)
 
 
 def create_move_planner(cfg: dict, board: Board) -> MovePlanner:
