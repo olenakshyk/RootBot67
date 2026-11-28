@@ -4,7 +4,7 @@ import pytest
 
 from rootbot.common.types import ClearingId, Faction, PieceCounts
 from rootbot.game.board import load_board
-from rootbot.game.state import BOT, GameState, GameStateError
+from rootbot.game.state import BOT, GameState, GameStateError, copy_pieces
 
 AUTUMN = Path(__file__).resolve().parents[2] / "config" / "maps" / "autumn.yaml"
 EYRIE, ALLIANCE, VAGABOND = Faction.EYRIE, Faction.ALLIANCE, Faction.VAGABOND
@@ -253,3 +253,12 @@ def test_partial_update_touches_only_given_clearings(board):
     s = GameState(board, pieces={C: {BOT: pc(w=2)}, other: {BOT: pc(w=4)}})
     s.update(pieces={C: {}}, keep_clearing=None, scores={}, clearings=[C])
     assert s.counts(C, BOT).warriors == 0 and s.counts(other, BOT).warriors == 4
+
+
+def test_copy_pieces_changes_leave_original_untouched():
+    original = {C: {BOT: pc(w=2)}}
+    copied = copy_pieces(original)
+    copied[C][BOT].warriors = 5
+    copied[C][EYRIE] = pc(w=1)
+    copied[ClearingId(1)] = {}
+    assert original == {C: {BOT: pc(w=2)}}

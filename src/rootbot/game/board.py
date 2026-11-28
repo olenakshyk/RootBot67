@@ -193,5 +193,5 @@ def create_board(cfg: dict) -> Board:
     """Мапа з config board.map_file; якщо не читається — FatalError (програма не стартує)."""
     try:
         return load_board(ROOT / cfg["board"]["map_file"])
-    except (OSError, BoardError) as e:
+    except (OSError, yaml.YAMLError, BoardError) as e:
         raise FatalError(f"board.map_file: cannot load the map: {e}") from e
