@@ -1,1 +1,1 @@
-# robot: керування xArm 7, pick & place у координатах дошки. Див. docs/robot.md.
+# robot: керування xArm 7, перенесення фігурок у координатах дошки. Див. docs/robot.md.
