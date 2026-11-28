@@ -4,6 +4,10 @@ robot:
   mock: false                # true - no real arm, motions are only logged
   ip: "192.168.1.xxx"        # set in config/local.yaml
   gripper: ufactory          # який гріппер: mock | ufactory | somatic (somatic — приватний драйвер)
+  ufactory_gripper:          # UFACTORY xArm gripper (robot.gripper: ufactory)
+    max_pulse: 850           # full stroke in SDK pulses (fully open)
+    speed_rpm: 2000          # gripper motor speed, r/min
+    timeout_s: 10            # how long set_position waits for the gripper to reach the target
   speed_mm_s: 100            # TCP speed during play
   debug_speed_mm_s: 50       # TCP speed when testing new motion code
   acc_mm_s2: 500

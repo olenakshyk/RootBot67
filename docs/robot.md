@@ -73,17 +73,21 @@ pick(точка A) → place(точка B)
 ### Драйвер: три бекенди за конфігом
 
 Поки залізо не зафіксоване, код не прив'язаний до одного гріппера. Тип береться з `config`
-`robot.gripper`; усі реалізують спільний `Gripper` (`connect / get_position / set_position`,
-позиція скрізь **0.0..1.0**, 0.0 — закрито, 1.0 — відкрито):
+`robot.gripper`; усі реалізують спільний `Gripper` (`connect / disconnect / get_position /
+set_position`, працює з `with`; позиція скрізь **0.0..1.0**, 0.0 — закрито, 1.0 — відкрито):
 
 | `robot.gripper` | Що це |
 | --- | --- |
 | `mock` | без заліза, памʼятає позицію (розробка/тести; також коли `robot.mock: true`) |
-| `ufactory` | стандартний гріппер UFACTORY xArm через `xarm-python-sdk` (тонкий адаптер 0..1 ↔ 0..850 пульсів) |
+| `ufactory` | стандартний гріппер UFACTORY xArm через `xarm-python-sdk` (тонкий адаптер 0..1 ↔ 0..`max_pulse` пульсів) |
 | `somatic` | гріппер Somatic, приватний драйвер (внутрішній протокол, **не входить у репо**) |
 
 `create_gripper(cfg)` обирає бекенд; решта коду (Manipulator) знає лише `Gripper`, тож гріппери
 взаємозамінні — як `Arm`/`MockArm`. Ручна перевірка: `python scripts/gripper_control.py --set 0.25`.
+
+Числа заліза `ufactory` — у `robot.ufactory_gripper` (`max_pulse`, `speed_rpm`, `timeout_s`).
+Якщо контролер руки в помилці (зіткнення, вихід за межі безпеки), `connect()` кидає
+`TemporaryError`: помилку скидає людина свідомо, напр. у xArm Studio.
 
 ## Код
 
