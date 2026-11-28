@@ -140,9 +140,9 @@ class MovePlanner:
         w, h = self.board_size_mm
         if not (0 <= point.x <= w and 0 <= point.y <= h):
             return False
-        own = _dist(point, self.board[clearing].center)
+        own = point.distance_to(self.board[clearing].center)
         others = (c.center for c in self.board.clearings.values() if c.id != clearing)
-        return all(own < _dist(point, center) for center in others)
+        return all(own < point.distance_to(center) for center in others)
 
     def _require_scanned(self, clearing: ClearingId) -> None:
         """ClearingNeedsScan, якщо галявину не покрив жоден огляд і на неї нічого не заплановано."""
@@ -182,13 +182,9 @@ def _rings(center: BoardPoint, step: float) -> Iterator[tuple[float, list[BoardP
         r += step
 
 
-def _dist(a: BoardPoint, b: BoardPoint) -> float:
-    return math.dist((a.x, a.y), (b.x, b.y))
-
-
 def _clearance(point: BoardPoint, taken: list[BoardPoint]) -> float:
     """Відстань від point до найближчої фігурки з taken, мм; без фігурок — нескінченність."""
-    return min((_dist(point, q) for q in taken), default=math.inf)
+    return min((point.distance_to(q) for q in taken), default=math.inf)
 
 
 def create_move_planner(cfg: dict, board: Board) -> MovePlanner:
