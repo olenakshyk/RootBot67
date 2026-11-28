@@ -10,7 +10,7 @@ from rootbot.game.board import load_board
 from rootbot.game.state import BOT
 from rootbot.vision.board_detector import BoardHomography
 from rootbot.vision.detector import Detector
-from rootbot.vision.observation import BoardObservation
+from rootbot.vision.observation import BoardObservation, RecheckReason, RecheckRequest
 from rootbot.vision.piece_detector_model import PieceBox
 
 AUTUMN = Path(__file__).resolve().parents[2] / "config" / "maps" / "autumn.yaml"
@@ -129,7 +129,7 @@ def test_same_piece_on_two_frames_is_one():
 def test_add_frames_says_what_is_not_visible_without_running_the_model():
     d = detector([view(w=300)], [[]])  # видно лише ліву половину дошки
     missing = d.add_frames([FRAME])
-    assert missing.reason == "not visible" and C1 not in missing.clearings
+    assert missing.reasons == [RecheckReason.NOT_VISIBLE] and C1 not in missing.clearings
     assert all(p.x > 290 for p in missing.uncovered.centers())  # не видно праву частину
     assert d.model.calls == 0
 
@@ -137,7 +137,7 @@ def test_add_frames_says_what_is_not_visible_without_running_the_model():
 def test_coverage_completes_over_two_calls_then_model_runs_once_on_all_frames():
     left, right = view(w=301), view(x0=200, w=600)
     d = detector([left, right], [[box_at(near(C1))], []])
-    assert d.add_frames([FRAME]).reason == "not visible"
+    assert d.add_frames([FRAME]).reasons == [RecheckReason.NOT_VISIBLE]
     assert d.add_frames([FRAME]) is None  # тепер видно всю дошку
     obs, _ = d.detect()
     assert d.model.calls == 1  # модель — раз, на обох кадрах
@@ -161,7 +161,7 @@ def test_target_can_be_one_clearing():
 
 def test_frame_without_board_is_skipped():
     d = detector([None], [[]])
-    assert d.add_frames([FRAME]).reason == "not visible"
+    assert d.add_frames([FRAME]).reasons == [RecheckReason.NOT_VISIBLE]
 
 
 def test_new_scan_starts_after_detect():
@@ -183,12 +183,12 @@ def test_detect_with_incomplete_coverage_uses_what_is_visible():
 def test_frames_that_disagree_ask_to_recheck():
     frames_boxes = [[box_at(near(C1)), box_at(near(C1, 20))], [box_at(near(C1))]]
     _, recheck = scan_and_detect(detector([view(), view()], frames_boxes), n_frames=2)
-    assert recheck == recheck.__class__([C1], "disagree")
+    assert recheck == RecheckRequest([C1], [RecheckReason.DISAGREE])
 
 
 def test_low_confidence_asks_to_recheck():
     _, recheck = scan_and_detect(detector([view()], [[box_at(near(C2), conf=0.5)]]))
-    assert recheck is not None and recheck.reason == "low confidence" and recheck.clearings == [C2]
+    assert recheck == RecheckRequest([C2], [RecheckReason.LOW_CONFIDENCE])
 
 
 def test_disagree_and_low_confidence_go_into_one_recheck():
@@ -197,7 +197,9 @@ def test_disagree_and_low_confidence_go_into_one_recheck():
         [box_at(near(C1)), box_at(near(C2), conf=0.5)],
     ]
     _, recheck = scan_and_detect(detector([view(), view()], frames_boxes), n_frames=2)
-    assert recheck == recheck.__class__([C1, C2], "disagree, low confidence")
+    assert recheck == RecheckRequest(
+        [C1, C2], [RecheckReason.DISAGREE, RecheckReason.LOW_CONFIDENCE]
+    )
 
 
 def test_keep_sets_keep_clearing():

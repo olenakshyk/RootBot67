@@ -15,7 +15,7 @@ from rootbot.game.actions import Move
 from rootbot.game.board import load_board
 from rootbot.game.state import BOT
 from rootbot.robot.manipulator import SUPPLY
-from rootbot.vision.observation import BoardObservation, RecheckRequest
+from rootbot.vision.observation import BoardObservation, RecheckReason, RecheckRequest
 
 AUTUMN = Path(__file__).resolve().parents[2] / "config" / "maps" / "autumn.yaml"
 C = ClearingId
@@ -581,21 +581,23 @@ def test_score_token_is_moved(track):
 
 def test_scans_until_covered_then_detects():
     o, fakes, server = make([BEFORE_BATTLE])
-    fakes.missing = [RecheckRequest([C(5)], "not visible")]
+    fakes.missing = [RecheckRequest([C(5)], [RecheckReason.NOT_VISIBLE])]
     assert o.observe_board() is BEFORE_BATTLE
     assert fakes.calls == ["scan", "add", "scan [5]", "add", "detect"]
 
 
 def test_detector_refines_until_sure():
-    unsure = RecheckRequest([C(5)], "disagree")
+    unsure = RecheckRequest([C(5)], [RecheckReason.DISAGREE])
     o, fakes, server = make([(BEFORE_BATTLE, unsure), (AFTER_BATTLE, unsure), (AFTER_BATTLE, None)])
     assert o.observe_board() is AFTER_BATTLE
     assert fakes.calls == ["scan", "add", "detect", "scan [5]", "refine", "scan [5]", "refine"]
 
 
 def test_rechecks_share_one_limit():
-    o, fakes, server = make([(BEFORE_BATTLE, RecheckRequest([C(5)], "disagree"))])  # завжди ще
-    fakes.missing = [RecheckRequest([C(5)], "not visible")] * 2
+    o, fakes, server = make(
+        [(BEFORE_BATTLE, RecheckRequest([C(5)], [RecheckReason.DISAGREE]))]
+    )  # завжди ще
+    fakes.missing = [RecheckRequest([C(5)], [RecheckReason.NOT_VISIBLE])] * 2
     assert o.observe_board() is BEFORE_BATTLE
     assert fakes.calls.count("add") - 1 + fakes.calls.count("refine") == o.max_rechecks
 
@@ -622,6 +624,6 @@ def test_board_never_found_waits_for_human():
 
 def test_partial_scan_without_requested_clearings_scans_them_again():
     o, fakes, server = make([BoardObservation(pieces={C(1): {}}), BEFORE_BATTLE])
-    request = RecheckRequest([C(5)], "needs scan")
+    request = RecheckRequest([C(5)], [RecheckReason.NEEDS_SCAN])
     assert o.observe_board(target=[C(5)], request=request) is BEFORE_BATTLE
     assert fakes.calls == ["scan [5]", "add", "detect", "scan [5]", "add", "detect"]
