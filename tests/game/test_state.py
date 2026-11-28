@@ -207,6 +207,12 @@ def test_update_takes_pieces_and_others_scores_from_camera(board):
     assert s.scores == {EYRIE: 5, BOT: 7}  # свій рахунок бот веде сам
 
 
+def test_update_keeps_last_known_scores_not_read(board):
+    s = GameState(board, scores={BOT: 7, EYRIE: 3, ALLIANCE: 4})
+    s.update(pieces={}, keep_clearing=None, scores={EYRIE: 5})
+    assert s.scores == {BOT: 7, EYRIE: 5, ALLIANCE: 4}
+
+
 def test_update_keeps_keep_if_not_seen(board):
     s = GameState(board, keep_clearing=C)
     s.update(pieces={}, keep_clearing=None, scores={})
