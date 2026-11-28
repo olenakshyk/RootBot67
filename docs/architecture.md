@@ -2,209 +2,151 @@
 
 ## Принципи
 
-1. **Кожен модуль можна розробляти без інших.** `game` не знає про камеру й робота. `robot` не знає правил гри.
+1. **Кожен модуль можна розробляти без інших.** `game` не знає про камеру й робота, `robot` не знає правил гри,
    `vision` не знає, що робить бот. Їх з'єднує лише `app`.
-2. **Без заліза теж працює.** Для камери є режим «читати фото з диска», для робота — `MockArm`.
-   Ігрову логіку тестуємо звичайним `pytest` на CI.
-3. **Камера — джерело істини про дошку.** Перед кожним ходом бота стан фігурок будується з кадру заново.
+2. **Камера — джерело істини про дошку.** Перед кожним ходом бота стан фігурок будується з кадрів заново.
    Програма пам'ятає тільки те, чого не видно: рахунок, Keep, пріоритети.
-4. **Людина завжди може виправити.** Кожен результат розпізнавання (стан дошки, карта наказу) оператор
-   підтверджує або правит у UI. Помилка зору не повинна зупиняти гру.
-5. **Безпека важливіша за швидкість.** Робот рухається лише в хід бота, лише після підтвердження оператора,
-   з обмеженою швидкістю. Див. [hardware-and-safety.md](hardware-and-safety.md).
+3. **Людина взаємодіє з ботом лише через застосунок оператора** ([ADR 0006](decisions/0006-operator-app.md)).
 
 ## Модулі
 
 ```mermaid
 flowchart TB
-    subgraph app [rootbot.app]
-        LOOP[turn_loop<br/>стан-машина ходу]
-        UI[operator_ui]
+    subgraph opapp [Застосунок оператора]
+        BTN[Хід бота / Карта наказу / Кубики / Карту дано / Кінець гри]
     end
-    subgraph game [rootbot.game]
-        BOARD[board<br/>мапа: галявини, сусіди]
-        STATE[state<br/>GameState]
-        BOT[marquise_bot<br/>правила → дії]
+    subgraph app [app]
+        MAIN[main]
+        SRV[OperatorServer]
+        LOOP[Orchestrator]
+        MP[MovePlanner]
     end
-    subgraph vision [rootbot.vision]
+    subgraph game [game]
+        BOT[marquise_bot]
+        STATE[GameState]
+        BOARD[Board]
+    end
+    subgraph vision [vision]
+        PD[Detector]
+        BD[board_detector]
         CAMV[camera]
-        BD[board_detector<br/>малюнок дошки → гомографія]
-        PD[piece_detector]
-        CR[card_reader]
     end
-    subgraph robot [rootbot.robot]
-        ARM[arm<br/>XArm / MockArm]
-        TF[transforms<br/>дошка мм → база робота]
-        PP[pick_place]
+    subgraph robot [robot]
+        SC[scan]
+        PP[Manipulator]
+        ARM[arm]
     end
-    common[rootbot.common<br/>Suit, Faction, ClearingId, ...]
 
+    MAIN -- запускає --> LOOP
+    BTN -- сигнали --> SRV --> LOOP
+    LOOP --> MP
     LOOP --> BOT
+    LOOP --> SC
     LOOP --> PD
-    LOOP --> CR
     LOOP --> PP
-    LOOP <--> UI
     PD --> BD --> CAMV
-    PP --> TF
+    SC --> ARM
     PP --> ARM
     BOT --> STATE --> BOARD
 ```
 
-| Модуль | Відповідальність | Вхід | Вихід | Залежності |
-| --- | --- | --- | --- | --- |
-| `common` | Спільні типи й константи | — | — | — |
-| `game` | Модель мапи, стан партії, правила Механічної Маркізи | `GameState`, карта наказу | список `Action` | `common` |
-| `vision` | Кадр → стан дошки й карта наказу | кадр камери | `BoardObservation`, `OrderCard` | `common`, OpenCV |
-| `robot` | Фізичні переміщення фігурок | `PickPlaceTask` (координати дошки, мм) | рух руки | `common`, xArm SDK |
-| `app` | Оркестрація ходу, UI оператора, кубики | усе вище | — | усі модулі |
+Нижче — зовнішній опис кожного компонента; деталі реалізації — у docstring самого файлу.
 
-## Ключові інтерфейси
+### app — точка входу й оркестратор партії
 
-Ці типи — «контракт» між людьми в команді. Змінюємо їх тільки через PR, на який дивляться власники обох
-модулів. Точні визначення з'являться в коді (`src/rootbot/...`), тут подано суть.
+- **`main`** — запускає програму (`python -m rootbot.app.main`): читає конфігурацію, створює всі компоненти
+  і запускає `Orchestrator`. Якщо компонент не створився — зупиняється з повідомленням. Код: [`app/main.py`](../src/rootbot/app/main.py).
+- **`Orchestrator`** — веде партію: Behaviour Tree на `py_trees` ([ADR 0007](decisions/0007-behaviour-tree.md)). Чекає
+  сигналів із застосунку й проводить хід — огляд → стан дошки (`vision`) → Світанок → День крок за кроком (`game`) →
+  перенесення фігурок (`robot`) → Вечір → home. Невдалий крок повторює, потім чекає людину. Сам нічого не рахує й не
+  рухає. Вимоги: [requirements/orchestrator.md](requirements/orchestrator.md). Код: [`app/orchestrator.py`](../src/rootbot/app/orchestrator.py).
+- **`MovePlanner`** — дії бота → конкретні переміщення: яких котів узяти й куди поставити (вільне місце в колі галявини шукає сам), жетон рахунку.
+  Код: [`app/move_planner.py`](../src/rootbot/app/move_planner.py).
+- **`OperatorServer`** — зв'язок із застосунком оператора: приймає сигнали й віддає поточний стан бота. Приймає лише
+  сигнал, якого бот чекає зараз (`WaitingFor`), і «Кінець гри» будь-коли. Сигнали — через `queue.Queue`, стан —
+  спільний об'єкт під `threading.Lock` ([ADR 0006](decisions/0006-operator-app.md)). Зараз це частина тієї самої
+  програми; HTTP-сервер у фоновому потоці — заплановано. Вимоги й методи: [requirements/operator-server.md](requirements/operator-server.md).
+  Код: [`app/operator_ui.py`](../src/rootbot/app/operator_ui.py).
 
-```python
-# common: спільні типи
-@dataclass
-class PieceCounts:  # фігурки однієї фракції на одній галявині
-    warriors: int  # панування = warriors + buildings,
-    buildings: int  # «найбільше ворожих фігурок» = усе разом
-    tokens: int
-    pawn: int  # Бродяга (Vagabond)
+### game — правила бота: стан дошки + карта наказу → дії
 
+- **`Board`** — мапа: 12 галявин, їхні масті, сусіди й пріоритети бота. Завантажується з `config/maps/autumn.yaml`. Код: [`game/board.py`](../src/rootbot/game/board.py).
+- **`GameState`** — стан партії: хто що має на кожній галявині. Відповідає на питання правил: хто панує, де вороги, кого бот обирає захисником. Код: [`game/state.py`](../src/rootbot/game/state.py).
+- **`marquise_bot`** — бот Механічна Маркіза: Світанок, День (бій / рух / набір) і Вечір за правилами з [game-rules.md](game-rules.md). На вхід стан і карта наказу, на вихід дії; після кидка кубиків `resolve_battle` рахує втрати (`BattleResult`). Карта без вартості крафту (`recruits` повертає `None`) — День повторюється з наступною картою. Код: [`game/marquise_bot.py`](../src/rootbot/game/marquise_bot.py).
+- **`actions`** — дії, які видає бот: `Battle` (бій на галявині), `Move` (перемістити воїнів), `Recruit` (набрати воїнів), `Score` (очки), а також `BattleResult` (втрати після бою). Код: [`game/actions.py`](../src/rootbot/game/actions.py).
 
-@dataclass
-class OrderCard:
-    suit: Suit  # FOX / RABBIT / MOUSE / BIRD
-    # FOX / RABBIT / MOUSE / ANY («?», будь-яка масть); порожній кортеж означає «немає вартості крафту»
-    craft_cost: tuple[Suit, ...]
+### vision — кадри огляду → стан дошки
 
+- **`Detector`** — головний клас зору: з кадрів огляду знаходить фігурки й приписує їх до галявин: каже лише, хто де стоїть. Заплановано: коти в запасі на планшеті бота, маркери рахунку. Повертає `BoardObservation` і `RecheckRequest` — що варто переглянути, щоб уточнити його (цикл покращень). Код: [`vision/detector.py`](../src/rootbot/vision/detector.py).
+- **`PieceDetectorModel`** — модель фігурок за інтерфейсом: кадри → рамки (`PieceBox`). Реалізацію (YOLO тощо) обирає конфіг; поки заглушка. Код: [`vision/piece_detector_model.py`](../src/rootbot/vision/piece_detector_model.py).
+- **`BoardMask`** — частина дошки як растр у мм: що треба побачити в огляді (уся дошка, галявини, інше) і скільки її покривають кадри. Код: [`vision/board_mask.py`](../src/rootbot/vision/board_mask.py).
+- **`board_detector`** — знаходить дошку й планшет бота на кадрі за їхнім малюнком: `BoardHomography` — піксель ↔ мм дошки й яку частину дошки видно ([vision.md](vision.md)). Вимоги до зору: [requirements/detector.md](requirements/detector.md). Код: [`vision/board_detector.py`](../src/rootbot/vision/board_detector.py).
+- **`board_reference`** — еталон дошки й планшета: знімок → вирівняне зображення в мм + характерні точки. Готується один раз скриптом `scripts/make_board_reference.py`. Код: [`vision/board_reference.py`](../src/rootbot/vision/board_reference.py).
+- **`geometry`** (заплановано) — рамка фігурки на кадрі → точка її основи → точка на площині дошки в мм ([calibration.md](calibration.md)). Зараз цей перехід робить `Detector` через `BoardHomography`.
+- **`camera`** — кадри для огляду: `FolderCamera` читає їх з теки на диску (`camera.source: folder`); камера RealSense — заплановано. Код: [`vision/camera.py`](../src/rootbot/vision/camera.py).
+- **`observation`** — `BoardObservation` — що `vision` повертає в `app`: кількості фігурок по галявинах (`pieces`), де стоїть кожна фігурка по фракціях (`positions`), усі зайняті точки разом із Keep (`occupied`), галявина Keep (`keep_clearing`), ПО з доріжки рахунку (`scores`, читання маркерів — заплановано), впевненість (`confidence`). Код: [`vision/observation.py`](../src/rootbot/vision/observation.py).
 
-# vision → app
-@dataclass
-class BoardObservation:
-    pieces: dict[ClearingId, dict[Faction, PieceCounts]]  # хто що має на кожній галявині
-    keep_clearing: ClearingId | None  # де лежить Keep (None, якщо не знайдено)
-    # де саме стоять воїни бота (для захвату)
-    bot_piece_positions: dict[ClearingId, list[BoardPoint]]
-    # усі зайняті точки галявини: фігурки будь-якої фракції й виду, разом з Keep
-    occupied: dict[ClearingId, list[BoardPoint]]
-    free_spots: dict[ClearingId, list[BoardPoint]]  # куди можна поставити воїна
-    confidence: float  # 0..1, якщо низька, UI просить перевірити
-    board_pose: BoardPose | None  # де дошка в системі робота за цим оглядом (None — не вдалося оцінити)
+Детектор фігурок навчається окремо в [`ml/`](ml.md) *(з'явиться з ML-PR)*; до програми доходять лише ваги в `models/`.
 
+### robot — рука: огляд і перенесення фігурок
 
-# game → app
-Action = Battle | Move | Recruit | Score
+- **`Manipulator`** — переносить одну фігурку: взяти в одній точці, поставити в іншій (галявина або планшет бота). На вхід `PieceMoveTask`. Поки заглушка: пише задачу в лог. Заплановано: рух руки й перевірка, що точки в робочій зоні, до руху. Код: [`robot/manipulator.py`](../src/rootbot/robot/manipulator.py).
+- **`Scanner`** — огляд: рука стає в оглядові пози й знімає кадри на зупинках (спершу майже згори; на `RecheckRequest` детектора сам вирішує, як дознімати). Поки поз немає: один кадр з поточного місця на кожен огляд. Заплановано: кадр зблизька перед захватом. Код: [`robot/scan.py`](../src/rootbot/robot/scan.py).
+- **`arm`** — рука: `MockArm` (без робота, рухи пишуться в лог) і `XArm` (справжня, через xArm SDK; заплановано). Решта коду знає лише `Protocol` `Arm`, тож вони взаємозамінні. Код: [`robot/arm.py`](../src/rootbot/robot/arm.py).
+- **`hand_eye`** (заплановано) — де камера на руці: поза камери для будь-якої пози руки ([calibration.md](calibration.md)).
+- **`transforms`** — перетворення точок і поз між системами координат: камера, фланець, робот, дошка. Код: [`robot/transforms.py`](../src/rootbot/robot/transforms.py).
 
+### common — спільні типи
 
-@dataclass
-class Battle:
-    clearing: ClearingId
-    defender: Faction
-
-
-@dataclass
-class BattleResult:  # resolve_battle(state, battle, rolls) після кидка кубиків
-    bot_warriors_lost: int
-    keep_lost: bool
-    defender_hits: int  # скільки фігурок знімає захисник (не більше, ніж має); у Бродяги це предмети
-
-
-@dataclass
-class Move:
-    src: ClearingId
-    dst: ClearingId
-    count: int
-
-
-@dataclass
-class Recruit:
-    clearing: ClearingId
-    count: int
-
-
-@dataclass
-class Score:  # Світанок завжди дає рівно один Score, навіть з 0 ПО
-    points: int
-    reason: str
-
-
-# app → robot
-@dataclass
-class PickPlaceTask:
-    pick: BoardPoint  # мм у системі дошки, або SUPPLY
-    place: BoardPoint  # мм у системі дошки, або SUPPLY
-```
+- **`types`** — масті, фракції, номери галявин, кількість фігурок на галявині (`PieceCounts`), карта наказу (`OrderCard`), точка на дошці в мм (`BoardPoint`). Контракт між модулями: змінюємо лише через PR, який переглядають власники всіх модулів, що їх використовують. Код: [`common/types.py`](../src/rootbot/common/types.py).
 
 ## Цикл ходу бота
 
+<details><summary>Діаграма ходу</summary>
+
 ```mermaid
 sequenceDiagram
-    actor Op as Оператор
-    participant App as app.turn_loop
+    actor Op as Застосунок оператора
+    participant App as app.Orchestrator
+    participant Rob as robot
     participant Vis as vision
     participant Game as game
-    participant Rob as robot
 
     Op->>App: «Хід бота»
-    App->>Vis: capture + detect
+    App->>Rob: огляд дошки
+    Rob-->>App: кадри + пози камери
+    App->>Vis: кадри
     Vis-->>App: BoardObservation
-    App->>Op: показати стан, підтвердити / виправити
-    Op->>App: OK
-    App->>Game: Birdsong(state)
-    Game-->>App: Score
-    Op->>App: відкрив ліву карту
-    App->>Vis: read_card
-    Vis-->>App: OrderCard (оператор підтверджує)
-    App->>Game: Daylight(state, card)
-    loop кожен Battle
-        App->>Op: кубики (RNG або ввести), мечі Бродяги
-        App->>Game: resolve_battle(state, battle, rolls)
-        Game-->>App: BattleResult
-        App->>Rob: зняти втрати бота
+    App->>Game: Світанок (стан)
+    Game-->>App: очки
+    Op->>App: карта наказу (order_card)
+    loop День крок за кроком: бій → рух → набір
+        App->>Game: наступний крок (актуальний стан)
+        Game-->>App: дія
+        opt Бій
+            App->>Op: кинути кубики, скільки випало
+            App->>Game: resolve_battle
+            Game-->>App: BattleResult
+            App->>Rob: зняти втрати бота, home
+            App->>Op: що зняти кожній фракції людей
+            Op->>App: зняли, «Хід бота»
+            App->>Vis: огляд галявин боїв
+        end
+        App->>Rob: PieceMoveTask × N
     end
-    opt були бої
-        Rob->>Rob: home
-        App->>Op: що зняти кожній фракції людей
-        Op->>App: зняли, «Хід бота»
-        App->>Vis: огляд галявин боїв
-    end
-    loop кожна Move / Recruit
-        App->>Rob: PickPlaceTask × N
-        App->>Vis: перевірка результату
-    end
+    App->>Game: Вечір
     Rob->>Rob: home
-    App->>Op: Evening: добрати карти до 5, хід людей
 ```
 
-Важливо: **дії `Move` залежать від результатів попередніх `Battle`.** Тому `game` не видає всі дії на хід
-одразу. `app` викликає рушій крок за кроком (бій → оновити стан → рух → оновити стан → набір), і кожен
-крок отримує актуальний `GameState`. Якщо відкрита карта без вартості крафту (`recruits` повертає `None`), після руху
-`app` просить відкрити наступну карту й повторює День з нею; якщо карт немає, переходить до Вечора.
+</details>
 
-## Системи координат
+## Де що ще
 
-| Система | Одиниці | Початок | Хто використовує |
-| --- | --- | --- | --- |
-| **Зображення** | пікселі | лівий верхній кут кадру | `vision` всередині |
-| **Дошка** (`board`) | мм | лівий верхній кут дошки, коли лого ROOT праворуч угорі; X уздовж довгої сторони, Y донизу (до доріжки рахунку) | **спільна мова** між `vision`, `game` (координати галявин) і `robot` |
-| **Робот** (`base`) | мм | основа xArm 7 | `robot` всередині |
-
-- **Зображення → Дошка:** гомографія за малюнком самої дошки (ключові точки ↔ еталонне зображення, без маркерів),
-  рахується **на кожному кадрі**, тож якщо дошку штовхнули, підрахунок фігурок по галявинах не ламається.
-- **Дошка → Робот:** поза дошки в системі робота (`BoardPose`), яку `vision` рахує **на кожному огляді**:
-  поза фланця руки в мить знімка × hand-eye × поза дошки відносно камери (`solvePnP` за тими самими точками).
-  Дошку зсунули — наступний огляд дає нову позу, і рука бере фігурки вже за нею. Один раз калібрується лише
-  hand-eye (камера відносно фланця). Деталі й де що житиме: [vision.md → V1](vision.md#v1-дошка-й-планшет-бота).
-
-Деталі: [calibration.md](calibration.md).
-
-## Конфігурація
-
-Усі «магічні числа» живуть у `config/`, не в коді:
-
-- `config/default.yaml`: IP робота, швидкості, безпечні висоти, індекс камери, шляхи до файлів калібрування;
-- `config/maps/autumn.yaml`: галявини, масті, сусіди, пріоритети, координати центрів;
-- `config/calibration/*.yaml`: результати калібрування (генеруються скриптами, **у git не комітимо**,
-  бо в кожного своє робоче місце).
+| Тема | Де |
+| --- | --- |
+| Системи координат, калібрування камери на руці | [calibration.md](calibration.md) |
+| Конфігурація (`config/`) | [config/default.yaml](../config/default.yaml) — коментарі біля кожного параметра |
+| ML: датасети й навчання детектора | [ml.md](ml.md) *(з'явиться з ML-PR)*, [ADR 0004](decisions/0004-ml-pipeline.md) *(з'явиться з ML-PR)* |
+| Вимоги до компонентів (FR / NFR) | [requirements/](requirements/) |
+| Що зараз робить людина, а згодом робот | [autonomy.md](autonomy.md) |
+| Рішення й чому так | [decisions/](decisions/) |
