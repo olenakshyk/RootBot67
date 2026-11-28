@@ -87,6 +87,8 @@ class BoardObservation:
     keep_clearing: ClearingId | None  # де лежить Keep (None, якщо не знайдено)
     # де саме стоять воїни бота (для захвату)
     bot_piece_positions: dict[ClearingId, list[BoardPoint]]
+    # усі зайняті точки галявини: фігурки будь-якої фракції й виду, разом з Keep
+    occupied: dict[ClearingId, list[BoardPoint]]
     free_spots: dict[ClearingId, list[BoardPoint]]  # куди можна поставити воїна
     confidence: float  # 0..1, якщо низька, UI просить перевірити
     board_pose: BoardPose | None  # де дошка в системі робота за цим оглядом (None — не вдалося оцінити)

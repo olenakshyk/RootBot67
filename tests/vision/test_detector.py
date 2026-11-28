@@ -23,11 +23,11 @@ FRAME = np.zeros((10, 10, 3), dtype=np.uint8)  # вміст не важливи�
 def view(x0=0.0, y0=0.0, w=600, h=600):
     """Кадр, де піксель = мм дошки зі зсувом (x0, y0): видно прямокутник x0..x0+w, y0..y0+h."""
     to_board = np.array([[1.0, 0, x0], [0, 1.0, y0], [0, 0, 1.0]])
-    return BoardHomography(to_board, (w, h), (580.0, 440.0))
+    return BoardHomography(to_board, (w, h), (570.0, 440.0))
 
 
 class FakeBoardDetector:
-    board_size_mm = (580.0, 440.0)
+    board_size_mm = (570.0, 440.0)
 
     def __init__(self, views):
         self.views = list(views)
@@ -73,6 +73,11 @@ def near(clearing, dx=0.0, dy=0.0):
     return BoardPoint(c.x + dx, c.y + dy)
 
 
+def rounded(points):
+    """Точки як відсортовані пари з округленням: порядок і похибка обчислень не важливі."""
+    return sorted((round(p.x, 3), round(p.y, 3)) for p in points)
+
+
 def scan_and_detect(d, n_frames=1, target=None):
     """add_frames -> detect, як робить Orchestrator, коли покриття вистачає з першого разу."""
     d.add_frames([FRAME] * n_frames, target=target)
@@ -84,12 +89,30 @@ def test_counts_and_positions_by_clearing():
         box_at(near(C1)),
         box_at(near(C1, 20)),
         box_at(near(C2), EYRIE),
-        box_at(BoardPoint(5, 430)),  # поза галявинами — ігнор
         box_at(near(C2, 10), conf=0.2),  # надто невпевнена — відкинута
     ]
     obs, recheck = scan_and_detect(detector([view()], [boxes]))
     assert obs.pieces[C1][BOT].warriors == 2 and obs.pieces[C2][EYRIE].warriors == 1
     assert len(obs.positions[C1][BOT]) == 2
+    assert recheck is None
+
+
+def test_piece_just_outside_the_circle_goes_to_the_nearest_clearing():
+    edge = near(C1, BOARD[C1].radius_mm + 3)
+    obs, _ = scan_and_detect(detector([view()], [[box_at(edge)]]))
+    assert obs.pieces[C1][BOT].warriors == 1
+
+
+def test_piece_outside_the_board_gets_no_clearing():
+    obs, _ = scan_and_detect(detector([view()], [[box_at(BoardPoint(5, 450))]]))
+    assert all(pieces == {} for pieces in obs.pieces.values())
+
+
+def test_score_marker_on_the_board_gets_no_clearing():
+    score = box_at(BoardPoint(100, 430), kind=PieceKind.SCORE)  # видно лише на першому кадрі
+    d = detector([view(), view()], [[score], []])
+    obs, recheck = scan_and_detect(d, n_frames=2)
+    assert all(pieces == {} for pieces in obs.pieces.values())
     assert recheck is None
 
 
@@ -122,7 +145,7 @@ def test_coverage_completes_over_two_calls_then_model_runs_once_on_all_frames():
 
 
 def test_97_percent_of_target_is_enough():
-    d = detector([view(w=575)], [[]])  # не дістає ~1 % дошки праворуч
+    d = detector([view(w=564)], [[]])  # не дістає ~1 % дошки праворуч
     assert d.add_frames([FRAME]) is None
 
 
@@ -168,9 +191,27 @@ def test_low_confidence_asks_to_recheck():
     assert recheck is not None and recheck.reason == "low confidence" and recheck.clearings == [C2]
 
 
+def test_disagree_and_low_confidence_go_into_one_recheck():
+    frames_boxes = [
+        [box_at(near(C1)), box_at(near(C1, 20)), box_at(near(C2), conf=0.5)],
+        [box_at(near(C1)), box_at(near(C2), conf=0.5)],
+    ]
+    _, recheck = scan_and_detect(detector([view(), view()], frames_boxes), n_frames=2)
+    assert recheck == recheck.__class__([C1, C2], "disagree, low confidence")
+
+
 def test_keep_sets_keep_clearing():
     obs, _ = scan_and_detect(detector([view()], [[box_at(near(C2), kind=PieceKind.KEEP)]]))
     assert obs.keep_clearing == C2
+
+
+def test_occupied_has_every_piece_on_the_clearing_with_the_keep():
+    bot, enemy, keep = near(C2), near(C2, 20), near(C2, -20)
+    boxes = [box_at(bot), box_at(enemy, EYRIE), box_at(keep, kind=PieceKind.KEEP)]
+    obs, _ = scan_and_detect(detector([view()], [boxes]))
+    assert rounded(obs.occupied[C2]) == rounded([bot, enemy, keep])
+    assert rounded(obs.positions[C2][BOT]) == rounded([bot])
+    assert obs.occupied[C1] == []
 
 
 # --- refine ---
@@ -195,3 +236,36 @@ def test_refine_updates_only_fully_seen_clearings():
     assert refined.pieces[C2][EYRIE].warriors == 1  # не видно — лишилось як було
     assert obs.pieces[C1][BOT].warriors == 1  # оригінал не змінено
     assert recheck is None
+
+
+def test_refine_replaces_occupied_only_for_fully_seen_clearings():
+    d = detector([view(), view()], [[box_at(near(C1)), box_at(near(C2), EYRIE)]])
+    obs, _ = scan_and_detect(d)
+    # новий кадр бачить лише галявину 1, де кота вже немає, а стоїть чужа фігурка
+    c1 = BOARD[C1]
+    edge = c1.radius_mm + 5
+    d.board_detector.views = [view(w=int(c1.center.x + edge), h=int(c1.center.y + edge))]
+    d.model.boxes = [[box_at(near(C1, 10), EYRIE)]]
+    refined, _ = d.refine(obs, [FRAME])
+    assert rounded(refined.occupied[C1]) == rounded([near(C1, 10)])
+    assert rounded(refined.occupied[C2]) == rounded([near(C2)])  # не видно — лишилось як було
+    assert rounded(obs.occupied[C1]) == rounded([near(C1)])  # оригінал не змінено
+
+
+def test_refine_clears_keep_when_its_clearing_is_seen_without_it():
+    d = detector([view(), view()], [[box_at(near(C2), kind=PieceKind.KEEP)]])
+    obs, _ = scan_and_detect(d)
+    d.model.boxes = [[]]
+    refined, _ = d.refine(obs, [FRAME])
+    assert refined.keep_clearing is None
+
+
+def test_refine_keeps_keep_when_its_clearing_is_not_seen():
+    d = detector([view(), view()], [[box_at(near(C2), kind=PieceKind.KEEP)]])
+    obs, _ = scan_and_detect(d)
+    c1 = BOARD[C1]
+    edge = c1.radius_mm + 5
+    d.board_detector.views = [view(w=int(c1.center.x + edge), h=int(c1.center.y + edge))]
+    d.model.boxes = [[]]
+    refined, _ = d.refine(obs, [FRAME])
+    assert refined.keep_clearing == C2

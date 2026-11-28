@@ -71,7 +71,9 @@ class Scanner:
             "frames": len(frames),
             "time": f"{datetime.now():%Y-%m-%d %H:%M:%S}",
         }
-        (self.frames_dir / f"{name}.yaml").write_text(yaml.safe_dump(meta, allow_unicode=True))
+        (self.frames_dir / f"{name}.yaml").write_text(
+            yaml.safe_dump(meta, allow_unicode=True), encoding="utf-8"
+        )
         log.debug(f"scan: {len(frames)} frames saved to {self.frames_dir}/{name}_*")
 
 

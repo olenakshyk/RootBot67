@@ -5,7 +5,7 @@ import numpy as np
 
 from rootbot.vision.board_reference import warp_to_board
 
-BOARD_MM = (580, 440)
+BOARD_MM = (570, 440)  # board.size_mm
 PX_PER_MM = 2.0
 # білі кола на чорній «дошці», центри в мм
 SPOTS_MM = [(100, 100), (450, 80), (300, 350)]

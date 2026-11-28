@@ -1,7 +1,7 @@
 # Default settings. Override locally in config/local.yaml (not committed).
 
 robot:
-  mock: false                # true — без справжньої руки, рухи пишуться в лог
+  mock: false                # true - no real arm, motions are only logged
   ip: "192.168.1.xxx"        # set in config/local.yaml
   speed_mm_s: 100            # TCP speed during play
   debug_speed_mm_s: 50       # TCP speed when testing new motion code
@@ -91,5 +91,5 @@ game:
     card_given_points: 1     # Poor Manual Dexterity: VP when a player would give the bot a card
 
 startup:
-  retries: 3                 # скільки разів повторити, якщо помилка тимчасова
+  retries: 3                 # how many times to retry a transient error
   retry_delay_s: 2
