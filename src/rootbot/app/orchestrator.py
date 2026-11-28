@@ -4,8 +4,13 @@
 Схема дерева — docs/decisions/0007-behaviour-tree.md (вручну: змінюєш build_tree() — онови її);
 вимоги — docs/requirements/orchestrator.md.
 
-Кроки не повторюють уже зроблене: дії плануються раз (TurnContext.done), задача руки знімається
-з черги TurnContext.tasks лише після успішного переміщення.
+Кроки не повторюють уже зроблене: дії плануються раз (TurnContext.done), дія знімається з черги
+TurnContext.actions лише після планування, задача руки з черги TurnContext.tasks — лише після
+успішного переміщення.
+
+Галявину, якої не знає MovePlanner (ClearingNeedsScan), крок оглядає й повторюється (Step.update):
+спершу виконує вже сплановані переміщення, потім частковий огляд цієї галявини, як після боїв.
+Не знає її й після огляду — звичайний невдалий крок: повтори, потім людина (RetryOrAskHuman).
 """
 
 from __future__ import annotations
@@ -18,7 +23,7 @@ from dataclasses import dataclass, field
 import py_trees
 from py_trees.common import Status
 
-from rootbot.app.move_planner import MovePlanner
+from rootbot.app.move_planner import ClearingNeedsScan, MovePlanner
 from rootbot.app.operator_ui import (
     CardGiven,
     DiceRolled,
@@ -29,9 +34,9 @@ from rootbot.app.operator_ui import (
     YourTurn,
 )
 from rootbot.common.errors import FatalError
-from rootbot.common.types import Faction, OrderCard
+from rootbot.common.types import ClearingId, Faction, OrderCard
 from rootbot.game import marquise_bot as bot
-from rootbot.game.actions import Battle
+from rootbot.game.actions import Battle, Move, Recruit
 from rootbot.game.board import Board
 from rootbot.game.state import BOT, GameState
 from rootbot.robot.arm import Arm
@@ -60,7 +65,8 @@ class TurnContext:
     in_turn: bool = False
     card: OrderCard | None = None
     cards_used: int = 0  # скільки карт Розкладу відкрито в цьому ході
-    done: set[str] = field(default_factory=set)  # кроки, дії яких уже сплановано
+    done: set[str] = field(default_factory=set)  # кроки, дії яких уже пораховано
+    actions: list[Move | Recruit] = field(default_factory=list)
     tasks: list[PieceMoveTask] = field(default_factory=list)  # ще не виконані переміщення
     battles: list[Battle] = field(default_factory=list)
     battle_index: int = 0
@@ -189,6 +195,21 @@ class Orchestrator:
             log.warning(f"still unsure after {rechecks} rechecks: {recheck}")
         return obs
 
+    def scan_clearings(self, clearings: list[ClearingId], reason: str) -> None:
+        """Частковий огляд лише `clearings`: оновлює на них GameState і MovePlanner. Keep — як
+        бачить огляд."""
+        obs = self.observe_board(
+            target=self.detector.clearings_mask(clearings),
+            request=RecheckRequest(clearings, reason),
+        )
+        self.ctx.state.update(
+            pieces=obs.pieces,
+            keep_clearing=obs.keep_clearing,
+            scores=obs.scores,
+            clearings=clearings,
+        )
+        self.planner.process(obs, clearings)
+
     def wait_for(self, what: WaitingFor, step: str, **changes: object) -> None:
         """Статус «чекаю людину»: що саме потрібно (what) і на якому кроці. Лише якщо змінилося."""
         now = self.server.current_state()
@@ -229,13 +250,23 @@ class Step(py_trees.behaviour.Behaviour):
 
     def update(self) -> Status:
         try:
-            return self.step()
+            return self.step_scanning_unknown_clearing()
         except FatalError:
             raise
         except Exception as e:
             log.exception(f"{self.name}: failed")
             self.o.ctx.error = f"{self.name}: {e}"
             return Status.FAILURE
+
+    def step_scanning_unknown_clearing(self) -> Status:
+        """step(); галявину, якої не знає MovePlanner, — оглянути й повторити step() раз."""
+        try:
+            return self.step()
+        except ClearingNeedsScan as e:
+            log.info(f"{self.name}: {e}, scanning it")
+            self.o.run_tasks()
+            self.o.scan_clearings([e.clearing], "needs scan")
+            return self.step()
 
     def step(self) -> Status:
         raise NotImplementedError
@@ -364,10 +395,12 @@ class Battles(Step):
                 where = f"battle in clearing {battle.clearing} vs {battle.defender.value}"
                 o.wait_for(WaitingFor.DICE, f"{where}: roll the dice")
                 return Status.RUNNING
-            dice = ctx.dice.pop(0)
+            dice = ctx.dice[0]
             result = bot.resolve_battle(
                 state, battle, dice.rolls, vagabond_swords=dice.vagabond_swords
             )
+            ctx.tasks += o.planner.remove(battle.clearing, result.bot_warriors_lost)
+            ctx.dice.pop(0)
             log.info(f"battle in clearing {battle.clearing}: {result}")
             state.add_warriors(battle.clearing, -result.bot_warriors_lost)
             hits = result.defender_hits
@@ -376,7 +409,6 @@ class Battles(Step):
                 state.keep_clearing = None
                 message += "; remove the Keep"  # тимчасово: AUT-8
             o.status(step="daylight: battle", waiting_for=None, message=message)
-            ctx.tasks += o.planner.remove(battle.clearing, result.bot_warriors_lost)
             ctx.battle_index += 1
             o.run_tasks()
         return Status.SUCCESS
@@ -389,28 +421,23 @@ class Rescan(Step):
         clearings = sorted({b.clearing for b in self.o.ctx.battles})
         if not clearings:
             return Status.SUCCESS
-        obs = self.o.observe_board(
-            target=self.o.detector.clearings_mask(clearings),
-            request=RecheckRequest(clearings, "after battles"),
-        )
-        self.o.ctx.state.update(
-            pieces=obs.pieces, keep_clearing=None, scores=obs.scores, clearings=clearings
-        )
-        self.o.planner.process(obs, clearings)
+        self.o.scan_clearings(clearings, "after battles")
         return Status.SUCCESS
 
 
 class Moves(Step):
     def step(self) -> Status:
-        o = self.o
+        o, state = self.o, self.o.ctx.state
         if "moves" not in o.ctx.done:
-            state = o.ctx.state
-            for move in bot.moves(state, o.card(), **o.game["move"]):
-                log.info(f"{move}")
-                o.ctx.tasks += o.planner.move(move)
-                state.add_warriors(move.src, -move.count)
-                state.add_warriors(move.dst, move.count)
+            o.ctx.actions = list(bot.moves(state, o.card(), **o.game["move"]))
             o.ctx.done.add("moves")
+        while o.ctx.actions:
+            move = o.ctx.actions[0]
+            log.info(f"{move}")
+            o.ctx.tasks += o.planner.move(move)
+            state.add_warriors(move.src, -move.count)
+            state.add_warriors(move.dst, move.count)
+            o.ctx.actions.pop(0)
         o.status(step="daylight: move", waiting_for=None)
         o.run_tasks()
         return Status.SUCCESS
@@ -418,16 +445,18 @@ class Moves(Step):
 
 class Recruits(Step):
     def step(self) -> Status:
-        o = self.o
+        o, state = self.o, self.o.ctx.state
         if "recruits" not in o.ctx.done:
-            state = o.ctx.state
             recruits = bot.recruits(state, o.card(), **o.game["recruit"])
             o.ctx.restart_day = recruits is None  # карта без вартості крафту
-            for recruit in recruits or []:
-                log.info(f"{recruit}")
-                o.ctx.tasks += o.planner.recruit(recruit)
-                state.add_warriors(recruit.clearing, recruit.count)
+            o.ctx.actions = list(recruits or [])
             o.ctx.done.add("recruits")
+        while o.ctx.actions:
+            recruit = o.ctx.actions[0]
+            log.info(f"{recruit}")
+            o.ctx.tasks += o.planner.recruit(recruit)
+            state.add_warriors(recruit.clearing, recruit.count)
+            o.ctx.actions.pop(0)
         o.status(step="daylight: recruit", waiting_for=None)
         o.run_tasks()
         return Status.SUCCESS
