@@ -33,7 +33,7 @@ from rootbot.app.operator_ui import (
     WaitingFor,
     YourTurn,
 )
-from rootbot.common.errors import FatalError
+from rootbot.common.errors import FatalError, TemporaryError
 from rootbot.common.types import ClearingId, Faction, OrderCard
 from rootbot.game import marquise_bot as bot
 from rootbot.game.actions import Battle, Move, Recruit
@@ -182,21 +182,42 @@ class Orchestrator:
     ) -> BoardObservation:
         """Огляд `target` (за замовчуванням уся дошка), спільний ліміт camera.max_rechecks:
         1. знімати, поки детектор не скаже, що бачить усю ціль (add_frames -> None);
-        2. розпізнати (detect);
+        2. розпізнати (detect); огляд, що не покрив жодної галявини (з request.clearings, якщо
+           задано), — знову з кроку 1 для всієї цілі, а після ліміту — TemporaryError;
         3. уточнювати, поки детектору є що переглянути (refine).
         Повертає найкраще, що є."""
-        missing = self.detector.add_frames(self.scanner.scan(request), target=target)
         rechecks = 0
-        while missing and rechecks < self.max_rechecks:
+        while True:
+            missing = self.detector.add_frames(self.scanner.scan(request), target=target)
+            while missing and rechecks < self.max_rechecks:
+                rechecks += 1
+                missing = self.detector.add_frames(self.scanner.scan(missing))
+            obs, recheck = self.detector.detect()
+            if self._covers_any_clearing(obs, request):
+                break
+            if rechecks >= self.max_rechecks:
+                raise TemporaryError(self._nothing_seen(request))
             rechecks += 1
-            missing = self.detector.add_frames(self.scanner.scan(missing))
-        obs, recheck = self.detector.detect()
+            log.warning(f"{self._nothing_seen(request)}: scanning again")
         while recheck and rechecks < self.max_rechecks:
             rechecks += 1
             obs, recheck = self.detector.refine(obs, self.scanner.scan(recheck))
         if recheck:
             log.warning(f"still unsure after {rechecks} rechecks: {recheck}")
         return obs
+
+    @staticmethod
+    def _covers_any_clearing(obs: BoardObservation, request: RecheckRequest | None) -> bool:
+        """Огляд побачив хоч одну галявину: будь-яку, а з request — хоч одну з request.clearings."""
+        if request is None:
+            return bool(obs.pieces)
+        return any(c in obs.pieces for c in request.clearings)
+
+    @staticmethod
+    def _nothing_seen(request: RecheckRequest | None) -> str:
+        if request is None:
+            return "board not found on any frame"
+        return f"scan covers none of the requested clearings {request.clearings}"
 
     def scan_clearings(self, clearings: list[ClearingId], reason: str) -> None:
         """Частковий огляд лише `clearings`: оновлює на них GameState і MovePlanner. Keep — як

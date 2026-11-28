@@ -1,5 +1,6 @@
 """Orchestrator з фейковими модулями: перевіряємо порядок дій і реакцію на сигнали."""
 
+from dataclasses import replace
 from pathlib import Path
 
 import pytest
@@ -82,8 +83,12 @@ def bot_positions(pieces):
 
 
 def obs(pieces, scores=None) -> BoardObservation:
+    """Огляд усієї дошки: детектор пише кожну видиму галявину, також порожню."""
     return BoardObservation(
-        pieces=pieces, positions=bot_positions(pieces), scores=scores or {}, confidence=1.0
+        pieces={c: {} for c in BOARD.clearings} | pieces,
+        positions=bot_positions(pieces),
+        scores=scores or {},
+        confidence=1.0,
     )
 
 
@@ -129,7 +134,7 @@ BEFORE_BATTLE = obs(
         C(2): {EYRIE: PieceCounts(warriors=2)},
     }
 )
-AFTER_BATTLE = obs({C(1): {BOT: PieceCounts(warriors=5)}})
+AFTER_BATTLE = obs({C(1): {BOT: PieceCounts(warriors=5)}, C(2): {EYRIE: PieceCounts(warriors=2)}})
 FOX_1 = OrderCard(Suit.FOX, (Suit.FOX,))
 
 
@@ -287,9 +292,7 @@ def test_move_onto_unscanned_clearing_scans_it_and_continues():
 
 
 def test_clearing_still_unknown_after_scan_waits_for_human():
-    no_positions = BoardObservation(
-        pieces={C(1): {BOT: PieceCounts(warriors=5)}}, positions={}, scores={}, confidence=1.0
-    )
+    no_positions = replace(obs({C(1): {BOT: PieceCounts(warriors=5)}}), positions={})
     o, fakes, server = make([no_positions])
     tick_until(o, waiting(server, WaitingFor.YOUR_TURN))
     server.your_turn()
@@ -386,3 +389,30 @@ def test_rechecks_share_one_limit():
     fakes.missing = [RecheckRequest([C(5)], "not visible")] * 2
     assert o.observe_board() is BEFORE_BATTLE
     assert fakes.calls.count("add") - 1 + fakes.calls.count("refine") == o.max_rechecks
+
+
+def test_board_not_found_scans_the_whole_board_again():
+    o, fakes, server = make([BoardObservation(), BEFORE_BATTLE])
+    tick_until(o, waiting(server, WaitingFor.YOUR_TURN))
+    server.your_turn()
+    tick_until(o, waiting(server, WaitingFor.ORDER_CARD))
+    assert fakes.calls[:6] == ["scan", "add", "detect", "scan", "add", "detect"]
+    assert o.ctx.state.counts(C(1), BOT).warriors == 5
+
+
+def test_board_never_found_waits_for_human():
+    o, fakes, server = make([BoardObservation()])
+    tick_until(o, waiting(server, WaitingFor.YOUR_TURN))
+    server.your_turn()
+    tick_until(o, lambda: server.current_state().step.startswith("needs help"))
+
+    state = server.current_state()
+    assert state.waiting_for == WaitingFor.YOUR_TURN
+    assert "board not found on any frame" in state.error
+
+
+def test_partial_scan_without_requested_clearings_scans_them_again():
+    o, fakes, server = make([BoardObservation(pieces={C(1): {}}), BEFORE_BATTLE])
+    request = RecheckRequest([C(5)], "needs scan")
+    assert o.observe_board(target=[C(5)], request=request) is BEFORE_BATTLE
+    assert fakes.calls == ["scan [5]", "add", "detect", "scan [5]", "add", "detect"]
