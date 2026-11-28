@@ -73,6 +73,11 @@ def near(clearing, dx=0.0, dy=0.0):
     return BoardPoint(c.x + dx, c.y + dy)
 
 
+def rounded(points):
+    """Точки як відсортовані пари з округленням: порядок і похибка обчислень не важливі."""
+    return sorted((round(p.x, 3), round(p.y, 3)) for p in points)
+
+
 def scan_and_detect(d, n_frames=1, target=None):
     """add_frames -> detect, як робить Orchestrator, коли покриття вистачає з першого разу."""
     d.add_frames([FRAME] * n_frames, target=target)
@@ -200,6 +205,15 @@ def test_keep_sets_keep_clearing():
     assert obs.keep_clearing == C2
 
 
+def test_occupied_has_every_piece_on_the_clearing_with_the_keep():
+    bot, enemy, keep = near(C2), near(C2, 20), near(C2, -20)
+    boxes = [box_at(bot), box_at(enemy, EYRIE), box_at(keep, kind=PieceKind.KEEP)]
+    obs, _ = scan_and_detect(detector([view()], [boxes]))
+    assert rounded(obs.occupied[C2]) == rounded([bot, enemy, keep])
+    assert rounded(obs.positions[C2][BOT]) == rounded([bot])
+    assert obs.occupied[C1] == []
+
+
 # --- refine ---
 
 
@@ -222,6 +236,20 @@ def test_refine_updates_only_fully_seen_clearings():
     assert refined.pieces[C2][EYRIE].warriors == 1  # не видно — лишилось як було
     assert obs.pieces[C1][BOT].warriors == 1  # оригінал не змінено
     assert recheck is None
+
+
+def test_refine_replaces_occupied_only_for_fully_seen_clearings():
+    d = detector([view(), view()], [[box_at(near(C1)), box_at(near(C2), EYRIE)]])
+    obs, _ = scan_and_detect(d)
+    # новий кадр бачить лише галявину 1, де кота вже немає, а стоїть чужа фігурка
+    c1 = BOARD[C1]
+    edge = c1.radius_mm + 5
+    d.board_detector.views = [view(w=int(c1.center.x + edge), h=int(c1.center.y + edge))]
+    d.model.boxes = [[box_at(near(C1, 10), EYRIE)]]
+    refined, _ = d.refine(obs, [FRAME])
+    assert rounded(refined.occupied[C1]) == rounded([near(C1, 10)])
+    assert rounded(refined.occupied[C2]) == rounded([near(C2)])  # не видно — лишилось як було
+    assert rounded(obs.occupied[C1]) == rounded([near(C1)])  # оригінал не змінено
 
 
 def test_refine_clears_keep_when_its_clearing_is_seen_without_it():

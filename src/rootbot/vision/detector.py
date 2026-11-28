@@ -18,6 +18,8 @@
 
 Рамка -> точка основи -> мм дошки -> найближча галявина (види ON_CLEARINGS, точки в межах дошки).
 Та сама фігурка з різних кадрів (фракція, вид, ближче за vision.merge_mm) — одна фігурка.
+Точки фігурок з `pieces` по фракціях — у `positions`; точки всіх фігурок галявини разом з Keep —
+у `occupied`.
 
 Ще не зроблено: маркери рахунку -> scores, запас котів на планшеті бота, поза дошки в базі робота.
 """
@@ -137,7 +139,10 @@ class Detector:
         if not self._detected:
             raise RuntimeError("Detector.refine() before detect()")
         copy = replace(
-            observation, pieces=dict(observation.pieces), positions=dict(observation.positions)
+            observation,
+            pieces=dict(observation.pieces),
+            positions=dict(observation.positions),
+            occupied=dict(observation.occupied),
         )
         return self._observe(copy, self._find_boards(frames))
 
@@ -248,15 +253,18 @@ class Detector:
     def _fill(
         self, observation: BoardObservation, pieces: list[_Piece], clearings: set[ClearingId]
     ) -> None:
-        """Записати кількості й позиції фігурок і Keep для `clearings` (інші галявини не чіпати)."""
+        """Записати кількості, позиції й зайняті точки фігурок і Keep для `clearings`
+        (інші галявини не чіпати)."""
         for clearing in clearings:
             observation.pieces[clearing] = {}
             observation.positions[clearing] = {}
+            observation.occupied[clearing] = []
         if observation.keep_clearing in clearings:
             observation.keep_clearing = None
         for piece in pieces:
             if piece.clearing not in clearings:
                 continue
+            observation.occupied[piece.clearing].append(piece.point())
             if piece.kind is PieceKind.KEEP:
                 observation.keep_clearing = piece.clearing
                 continue
